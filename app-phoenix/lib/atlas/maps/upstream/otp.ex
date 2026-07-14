@@ -139,9 +139,7 @@ defmodule Atlas.Maps.Upstream.Otp do
   end
 
   defp graphql_error(errors) when is_list(errors) do
-    errors
-    |> Enum.map(fn error -> error["message"] || inspect(error) end)
-    |> Enum.join("; ")
+    Enum.map_join(errors, "; ", fn error -> error["message"] || inspect(error) end)
   end
 
   defp graphql_error(error), do: inspect(error)
