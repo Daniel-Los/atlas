@@ -4,6 +4,11 @@ All notable changes to Dawarich Atlas are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Dokploy's minimal compose file no longer starts or exposes Overpass by default; the Overpass service and `/overpass` proxy are now commented out together as optional poster-sidecar configuration.
+
 ## [0.3.0] - 2026-06-10
 
 ### Fixed
