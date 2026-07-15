@@ -139,7 +139,7 @@ services:
       # wiktorn/overpass-api needs OSM-XML+bzip2; the sidecar produces this
       # from the active PBF on every apply (data/osm/current.osm.bz2).
       OVERPASS_PLANET_URL: file:///osm/current.osm.bz2
-      OVERPASS_DIFF_URL: ${OVERPASS_DIFF_URL:-https://download.geofabrik.de/europe/germany-updates/}
+      OVERPASS_DIFF_URL: ${OVERPASS_DIFF_URL:-}
       OVERPASS_RULES_LOAD: 10
       OVERPASS_COMPRESSION: lz4
     volumes:
