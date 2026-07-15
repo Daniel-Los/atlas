@@ -120,10 +120,15 @@ services:
       build_admins: "True"
       build_elevation: ${BUILD_ELEVATION:-False}
       use_tiles_ignore_pbf: "False"
+      server_threads: ${VALHALLA_THREADS:-4}
     volumes:
       - ./data/valhalla:/custom_files
       - ./data/srtm:/custom_files/elevation_data
       - ./data/osm:/osm:ro
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     restart: unless-stopped
 
   overpass:

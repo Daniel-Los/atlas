@@ -4,6 +4,11 @@ All notable changes to Dawarich Atlas are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Valhalla now starts with a safe default worker cap and file-descriptor limit on multi-core hosts (#24)
+
 ## [0.3.0] - 2026-06-10
 
 ### Fixed
