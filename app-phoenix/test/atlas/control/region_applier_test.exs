@@ -73,6 +73,69 @@ defmodule Atlas.Control.RegionApplierTest do
     {:ok, tmp: tmp}
   end
 
+  describe "overpass source conversion" do
+    test "a failed convert removes the orphaned .partial", %{tmp: tmp} do
+      start_applier(tmp,
+        osmium_convert: fn dir, _in_path, out ->
+          File.write!(Path.expand(out, dir), "half-written")
+          {:error, 1, "osmium: killed"}
+        end
+      )
+
+      assert {:ok, job_id} = RegionApplier.start(["berlin"])
+      assert_receive {:apply_error, %{job_id: ^job_id}}, 2_000
+
+      refute File.exists?(Path.join(tmp, "osm/current.osm.bz2.partial")),
+             "orphaned .partial must be cleaned up, not left to accumulate"
+    end
+
+    test "a failed convert fails the apply loudly instead of keeping stale data", %{tmp: tmp} do
+      File.mkdir_p!(Path.join(tmp, "osm"))
+      stale = Path.join(tmp, "osm/current.osm.bz2")
+      File.write!(stale, "seven-weeks-old")
+
+      start_applier(tmp,
+        osmium_convert: fn _dir, _in_path, _out -> {:error, 1, "osmium: killed"} end
+      )
+
+      assert {:ok, job_id} = RegionApplier.start(["berlin"])
+
+      assert_receive {:apply_error, %{job_id: ^job_id, phase: :converting, reason: reason}}, 2_000
+      assert reason =~ "osmium: killed"
+
+      refute_received {:restart, _}
+    end
+
+    test "a successful convert still promotes .partial to the real bz2", %{tmp: tmp} do
+      File.mkdir_p!(Path.join(tmp, "osm"))
+      File.write!(Path.join(tmp, "osm/current.osm.bz2"), "seven-weeks-old")
+
+      start_applier(tmp)
+
+      assert {:ok, job_id} = RegionApplier.start(["berlin"])
+      assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+      assert File.read!(Path.join(tmp, "osm/current.osm.bz2")) == "bz2"
+      refute File.exists?(Path.join(tmp, "osm/current.osm.bz2.partial"))
+    end
+
+    test "orphaned .partial files from a previous run are swept at apply start", %{tmp: tmp} do
+      osm = Path.join(tmp, "osm")
+      File.mkdir_p!(osm)
+      File.write!(Path.join(osm, "current.osm.bz2.partial"), "interrupted")
+      File.write!(Path.join(osm, "current.osm.pbf.partial"), "interrupted")
+
+      start_applier(tmp)
+
+      assert {:ok, job_id} = RegionApplier.start(["berlin"])
+      assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+      refute File.exists?(Path.join(osm, "current.osm.pbf.partial"))
+
+      assert File.read!(Path.join(osm, "current.osm.bz2")) == "bz2"
+    end
+  end
+
   test "single region: download, symlink, convert, stage otp, restart", %{tmp: tmp} do
     File.mkdir_p!(Path.join(tmp, "otp"))
     File.write!(Path.join(tmp, "otp/graph.obj"), "stale")

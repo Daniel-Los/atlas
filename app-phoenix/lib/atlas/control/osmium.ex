@@ -23,7 +23,7 @@ defmodule Atlas.Control.Osmium do
   """
   def merge(data_dir, sources, out) when is_list(sources) do
     args = ["merge"] ++ sources ++ ["-O", "-o", out]
-    GenServer.call(__MODULE__, {:osmium, data_dir, args}, :timer.minutes(30))
+    GenServer.call(__MODULE__, {:osmium, data_dir, args}, call_timeout())
   end
 
   @doc """
@@ -32,8 +32,18 @@ defmodule Atlas.Control.Osmium do
   """
   def convert_to_osm_bz2(data_dir, in_path, out_path) do
     args = ["cat", in_path, "-o", out_path, "-O", "-f", "osm.bz2"]
-    GenServer.call(__MODULE__, {:osmium, data_dir, args}, :timer.minutes(30))
+    GenServer.call(__MODULE__, {:osmium, data_dir, args}, call_timeout())
   end
+
+  @doc """
+  Client-side ceiling for an osmium invocation. Defaults to `:infinity`.
+
+  These are long-running external ports: bzip2 compression is effectively
+  single-threaded, so a country-scale `osmium cat -f osm.bz2` runs well past
+  an hour. A wall-clock ceiling kills it mid-write and strands a `.partial`,
+  so serialization — not a deadline — is what this GenServer is for.
+  """
+  def call_timeout, do: Application.get_env(:atlas, :osmium_timeout, :infinity)
 
   @impl true
   def init(opts) do

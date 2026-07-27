@@ -43,4 +43,42 @@ defmodule Atlas.Control.OsmiumTest do
     assert {:error, 1, "Open failed for 'a.osm.pbf'"} =
              Osmium.merge("/work/data/osm/sources", ["a.osm.pbf"], "out.osm.pbf")
   end
+
+  describe "call timeout" do
+    test "defaults to :infinity so a slow convert is never killed by wall clock" do
+      assert Osmium.call_timeout() == :infinity
+    end
+
+    test "a convert far longer than the old 30-minute ceiling still succeeds" do
+      # bzip2 compression of a country-scale PBF runs 45-50 min; the previous
+      # hard-coded :timer.minutes(30) killed it mid-write.
+      slow_runner = fn _cmd, _args, _opts ->
+        Process.sleep(120)
+        {"done", 0}
+      end
+
+      start_supervised!({Osmium, runner: slow_runner})
+
+      assert {:ok, "done"} =
+               Osmium.convert_to_osm_bz2("/work/data/osm", "current.osm.pbf", "out.partial")
+    end
+
+    test "an explicit timeout override is honoured" do
+      Application.put_env(:atlas, :osmium_timeout, 20)
+      on_exit(fn -> Application.delete_env(:atlas, :osmium_timeout) end)
+
+      assert Osmium.call_timeout() == 20
+
+      blocking_runner = fn _cmd, _args, _opts ->
+        Process.sleep(500)
+        {"done", 0}
+      end
+
+      start_supervised!({Osmium, runner: blocking_runner})
+
+      assert catch_exit(
+               Osmium.convert_to_osm_bz2("/work/data/osm", "current.osm.pbf", "out.partial")
+             )
+    end
+  end
 end

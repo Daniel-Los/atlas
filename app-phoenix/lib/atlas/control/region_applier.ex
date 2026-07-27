@@ -7,7 +7,8 @@ defmodule Atlas.Control.RegionApplier do
     2. download GTFS bundles into `gtfs/` (failure is non-fatal)
     3. materialise `osm/current.osm.pbf` — relative symlink for one source,
        `osmium merge` via `.partial` + rename for several
-    4. convert to `osm/current.osm.bz2` for overpass (failure is non-fatal)
+    4. convert to `osm/current.osm.bz2` for overpass (fatal — a swallowed
+       failure would leave overpass importing a stale snapshot silently)
     5. stage OTP inputs (`otp/region.osm.pbf` + GTFS zips, drop `graph.obj`)
     6. `docker compose restart` the enabled ingest services
 
@@ -164,6 +165,7 @@ defmodule Atlas.Control.RegionApplier do
     gtfs_dir = Path.join(state.data_dir, "gtfs")
     File.mkdir_p!(sources_dir)
     File.mkdir_p!(gtfs_dir)
+    sweep_partials(osm_dir)
 
     with {:ok, sources} <- download_pbfs(state, job_id, entries, sources_dir),
          :ok <- download_gtfs(state, job_id, entries, gtfs_dir),
@@ -252,15 +254,51 @@ defmodule Atlas.Control.RegionApplier do
   defp convert_for_overpass(state, job_id, osm_dir) do
     progress(state, job_id, :converting, %{region: nil, progress: nil})
     bz2 = Path.join(osm_dir, "current.osm.bz2")
+    partial = bz2 <> ".partial"
 
-    # Non-fatal, mirroring the Go sidecar: overpass simply keeps its previous
-    # snapshot if the conversion fails.
+    # Fatal on purpose: a swallowed failure leaves the previous (possibly
+    # weeks-old) current.osm.bz2 in place, and overpass re-imports it with no
+    # indication the refresh never happened.
     case state.osmium_convert.(osm_dir, "current.osm.pbf", "current.osm.bz2.partial") do
-      {:ok, _} -> File.rename(bz2 <> ".partial", bz2)
-      {:error, _code, _output} -> :ok
-    end
+      {:ok, _} ->
+        case File.rename(partial, bz2) do
+          :ok ->
+            :ok
 
-    :ok
+          {:error, reason} ->
+            Logger.error("overpass source conversion reported success but #{partial} is missing")
+            {:error, :converting, {:promote, reason}}
+        end
+
+      {:error, code, output} ->
+        File.rm(partial)
+
+        Logger.error(
+          "overpass source conversion failed (exit #{code}); " <>
+            "#{bz2} left untouched and may be stale: #{output}"
+        )
+
+        {:error, :converting, {code, output}}
+    end
+  end
+
+  # An interrupted merge/convert (restart, OOM, kill) strands a multi-hundred-MB
+  # `.partial`. Sweep before writing new ones so they neither accumulate nor get
+  # mistaken for a completed artifact.
+  defp sweep_partials(osm_dir) do
+    case File.ls(osm_dir) do
+      {:ok, entries} ->
+        for name <- entries, String.ends_with?(name, ".partial") do
+          path = Path.join(osm_dir, name)
+          Logger.info("removing orphaned partial from an interrupted run: #{path}")
+          File.rm(path)
+        end
+
+        :ok
+
+      {:error, _reason} ->
+        :ok
+    end
   end
 
   defp stage_otp(state, job_id, osm_dir, gtfs_dir) do
