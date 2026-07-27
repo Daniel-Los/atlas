@@ -74,12 +74,17 @@ defmodule Atlas.Maps.BasemapPresets do
     end
   end
 
-  @doc "Build today's UTC Protomaps daily-planet URL."
-  def protomaps_daily_url do
-    {{y, m, d}, _} = :calendar.universal_time()
-    "https://build.protomaps.com/#{y}#{pad(m)}#{pad(d)}.pmtiles"
-  end
+  @doc """
+  Build the Protomaps daily-planet URL for the most recent published build.
 
-  defp pad(n) when n < 10, do: "0#{n}"
-  defp pad(n), do: Integer.to_string(n)
+  Protomaps publishes a given day's planet some hours into that day, so
+  today's file is routinely still a 404. Target the previous day instead.
+  """
+  def protomaps_daily_url, do: protomaps_daily_url(Date.utc_today())
+
+  @doc "Build the Protomaps daily-planet URL for the day before `date`."
+  def protomaps_daily_url(%Date{} = date) do
+    stamp = date |> Date.add(-1) |> Calendar.strftime("%Y%m%d")
+    "https://build.protomaps.com/#{stamp}.pmtiles"
+  end
 end
