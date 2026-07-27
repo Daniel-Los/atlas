@@ -20,6 +20,13 @@ services:
       # Phoenix runtime. Migrations run automatically on boot.
       PHX_SERVER: "true"
       PHX_HOST: ${PHX_HOST:-localhost}
+      # Public scheme/port as clients see them. Defaults target a TLS-
+      # terminating proxy; set PHX_SCHEME=http (+ PHX_PORT) for a plain-HTTP
+      # LAN deployment, which also turns the HTTPS redirect off.
+      PHX_SCHEME: ${PHX_SCHEME:-}
+      PHX_PORT: ${PHX_PORT:-}
+      FORCE_SSL: ${FORCE_SSL:-}
+      PHX_CHECK_ORIGIN: ${PHX_CHECK_ORIGIN:-}
       PORT: "4000"
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:-}
       # SQLite by default. For Postgres set DATABASE_URL=postgres://... AND use
