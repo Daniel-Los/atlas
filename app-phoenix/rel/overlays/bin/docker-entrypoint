@@ -1,0 +1,55 @@
+#!/bin/sh
+# Make the bind-mounted data dir usable before the app touches it.
+#
+# Docker creates a bind-mount source as root:root, and NAS hosts (Unraid,
+# Synology, QNAP) own it as their own "nobody" — neither of which matches the
+# image's uid. Without this the app fails on /data/.secret_key_base with a
+# bare "Permission denied" and restart-loops, which reads like a corrupt key
+# rather than an ownership mismatch.
+#
+# Started as root: take ownership of the data dir, then drop to PUID:PGID
+# (default 65534:65534) keeping the supplementary groups, so the control plane
+# still reaches the docker socket group from compose's `group_add`.
+# Started as non-root (compose `user:`): nothing to chown — just check the dir
+# is usable and say so clearly if it is not.
+set -eu
+
+DATA_DIR="${ATLAS_DATA_DIR:-/data}"
+PUID="${PUID:-65534}"
+PGID="${PGID:-65534}"
+
+mkdir -p "$DATA_DIR" 2>/dev/null || true
+
+if [ "$(id -u)" = "0" ]; then
+  chown -R "$PUID:$PGID" "$DATA_DIR" ||
+    echo "atlas: warning: could not chown $DATA_DIR to $PUID:$PGID" >&2
+
+  # Carry root's supplementary groups across the drop; compose adds the docker
+  # socket's gid there and the control plane needs it.
+  groups="$(id -G | tr ' ' ',')"
+
+  exec setpriv \
+    --reuid="$PUID" \
+    --regid="$PGID" \
+    --groups="$groups" \
+    -- "$@"
+fi
+
+if [ ! -w "$DATA_DIR" ]; then
+  cat >&2 <<EOF
+atlas: $DATA_DIR is not writable by uid $(id -u).
+
+The data dir holds the SQLite database and the generated secret key, so the
+app cannot boot without it. Either:
+
+  * let the container fix it for you — start it as root (drop any \`user:\`
+    override) and set PUID/PGID to the host owner of ./data/app, e.g.
+        PUID=99
+        PGID=100
+  * or chown it on the host to the uid this container runs as:
+        chown -R $(id -u):$(id -g) ./data/app
+EOF
+  exit 1
+fi
+
+exec "$@"
