@@ -37,14 +37,18 @@ echo "DOCKER_GID=0" >> .env
 docker compose up -d app
 ```
 
-**`PUID` / `PGID`** — the uid:gid Atlas runs as, and the owner it gives `./data`
-on boot (default `65534:65534`, i.e. `nobody`). On a NAS the appdata share
-usually belongs to someone else — Unraid uses `99:100`, Synology and QNAP
-differ — and Atlas will refuse to start with a message naming the directory
-rather than looping on "Permission denied". Set them to the share's owner:
+**`PUID` / `PGID`** — the uid:gid Atlas runs as, and the owner it gives its own
+data directories on boot: `./data/app` plus the region dirs `./data/{osm,gtfs,otp,tiles}`
+(default `65534:65534`, i.e. `nobody`). Other services under `./data` keep their
+own ownership — `whosonfirst`, for instance, runs as `${UID:-1001}`.
+
+On a NAS the appdata share usually belongs to someone else — Unraid uses
+`99:100`, Synology and QNAP differ — and Atlas will refuse to start with a
+message naming the directories rather than looping on "Permission denied". Set
+them to the share's owner:
 
 ```bash
-stat -c '%u %g' ./data          # whoever owns it on the host
+stat -c '%u %g' ./data/app      # whoever owns it on the host
 printf 'PUID=99\nPGID=100\n' >> .env
 docker compose up -d app
 ```

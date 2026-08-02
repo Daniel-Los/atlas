@@ -30,6 +30,10 @@ services:
       # 99:100) — set these there so the app can write its DB and secret key.
       PUID: ${PUID:-65534}
       PGID: ${PGID:-65534}
+      # Also readable by the entrypoint so the socket group survives the
+      # privilege drop — on macOS the socket is gid 0, which is otherwise
+      # stripped as root's own group.
+      DOCKER_GID: ${DOCKER_GID:-999}
       DATABASE_URL: ${DATABASE_URL:-}
       PHOTON_URL: http://photon:2322
       PLACEHOLDER_URL: http://placeholder:3000

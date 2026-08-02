@@ -54,8 +54,11 @@ setup_sandbox() {
   SANDBOX="$(mktemp -d)"
   BIN="$SANDBOX/bin"
   DATA="$SANDBOX/data"
+  WORK_DATA="$SANDBOX/work-data"
   LOG="$SANDBOX/calls.log"
   mkdir -p "$BIN" "$DATA"
+  # The region pipeline's bind mounts, which the app writes through /work/data.
+  mkdir -p "$WORK_DATA/osm" "$WORK_DATA/gtfs" "$WORK_DATA/otp" "$WORK_DATA/tiles"
   : > "$LOG"
 
   cat > "$BIN/id" <<EOF
@@ -90,7 +93,7 @@ teardown_sandbox() { rm -rf "$SANDBOX"; }
 # Run the entrypoint in the sandbox. Echoes stdout+stderr; sets RUN_STATUS.
 run_entrypoint() {
   set +e
-  RUN_OUTPUT="$(PATH="$BIN:$PATH" ATLAS_DATA_DIR="$DATA" "$@" \
+  RUN_OUTPUT="$(PATH="$BIN:$PATH" ATLAS_DATA_DIR="$DATA" ATLAS_WORK_DATA_DIR="$WORK_DATA" "$@" \
     "$ENTRYPOINT" /bin/echo "app-started" 2>&1)"
   RUN_STATUS=$?
   set -e
@@ -108,6 +111,43 @@ assert_contains "drops to the matching gid" "$RUN_CALLS" "--regid=65534"
 assert_contains "preserves the docker socket group" "$RUN_CALLS" "--groups=999"
 teardown_sandbox
 
+printf '\n== the region pipeline bind mounts are prepared too ==\n'
+setup_sandbox 0 "0 999"
+run_entrypoint env
+for sub in osm gtfs otp tiles; do
+  assert_contains "chowns /work/data/$sub" "$RUN_CALLS" "$WORK_DATA/$sub"
+done
+teardown_sandbox
+
+printf '\n== relocating DATABASE_PATH still prepares the secret-key dir ==\n'
+setup_sandbox 0 "0 999"
+mkdir -p "$DATA/db"
+run_entrypoint env DATABASE_PATH="$DATA/db/atlas.sqlite3" SECRET_KEY_BASE_PATH="$DATA/.secret_key_base"
+assert_contains "prepares the relocated database dir" "$RUN_CALLS" "$DATA/db"
+assert_contains "still prepares the secret-key dir" "$RUN_CALLS" "chown -R 65534:65534 $DATA
+"
+teardown_sandbox
+
+printf '\n== DOCKER_GID=0 (macOS/OrbStack) survives the gid-0 strip ==\n'
+setup_sandbox 0 "0"
+run_entrypoint env DOCKER_GID=0
+assert_contains "keeps the socket group the operator asked for" "$RUN_CALLS" "--groups=0"
+assert_not_contains "does not discard it as root's own gid" "$RUN_CALLS" "--clear-groups"
+teardown_sandbox
+
+printf '\n== remediation advice names the app data dir, not the whole ./data tree ==\n'
+setup_sandbox 65534 "65534 999"
+chmod 500 "$DATA"
+run_entrypoint env
+chown_line="$(printf '%s' "$RUN_OUTPUT" | grep 'chown -R' | head -1)"
+assert_contains "the suggested chown targets the app data dir" "$chown_line" "./data/app"
+assert_not_contains "the suggested chown does not target the whole tree" \
+  "$(printf '%s' "$chown_line" | sed 's|\./data/[a-z]*||g')" "./data"
+assert_contains "warns about sibling services before widening it" "$RUN_OUTPUT" "whosonfirst"
+assert_contains "names PUID as the remedy" "$RUN_OUTPUT" "PUID"
+chmod 700 "$DATA"
+teardown_sandbox
+
 printf '\n== root, but chown fails (NFS root_squash / userns-remap) ==\n'
 setup_sandbox 0 "0 999"
 cat > "$BIN/chown" <<EOF
@@ -116,11 +156,26 @@ echo "chown \$*" >> "$LOG"
 exit 1
 EOF
 chmod +x "$BIN/chown"
-run_entrypoint env
+run_entrypoint env PUID=99 PGID=100
 assert_status "refuses to start rather than crash-looping" "$RUN_STATUS" 1
 assert_contains "explains the data dir is unusable" "$RUN_OUTPUT" "not writable"
 assert_contains "points at the PUID/PGID knob" "$RUN_OUTPUT" "PUID"
+assert_contains "reports the uid the app will run as, not root" "$RUN_OUTPUT" "99"
+assert_not_contains "does not advise chowning to root" "$RUN_OUTPUT" "chown -R 0:0"
 assert_not_contains "does not start the app" "$RUN_OUTPUT" "app-started"
+teardown_sandbox
+
+printf '\n== every unwritable mount is named, not just the last one ==\n'
+setup_sandbox 0 "0 999"
+cat > "$BIN/chown" <<EOF
+#!/bin/sh
+echo "chown \$*" >> "$LOG"
+exit 1
+EOF
+chmod +x "$BIN/chown"
+run_entrypoint env
+assert_contains "names the app data dir" "$RUN_OUTPUT" "$DATA"
+assert_contains "names a failing region dir too" "$RUN_OUTPUT" "$WORK_DATA/osm"
 teardown_sandbox
 
 printf '\n== privilege drop does not carry root gid 0 forward ==\n'
