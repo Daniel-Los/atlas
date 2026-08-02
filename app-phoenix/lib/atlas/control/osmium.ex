@@ -110,14 +110,16 @@ defmodule Atlas.Control.Osmium do
     # Kill the OS process FIRST: tearing down the Task only drops the port
     # owner, leaving osmium alive to keep writing into the data dir while the
     # freed GenServer lets the next apply start a second one.
-    kill_os_process()
+    killed? = kill_os_process()
 
-    case Task.shutdown(task, :brutal_kill) do
-      # It finished inside the race window — honour the real result rather than
-      # discarding a completed multi-hour convert as stalled.
-      {:ok, result} ->
+    case {killed?, Task.shutdown(task, :brutal_kill)} do
+      # Nothing was killed and it finished inside the race window — honour the
+      # real result rather than discarding a completed multi-hour convert.
+      {false, {:ok, result}} ->
         {:ok, result}
 
+      # If we SIGKILLed it, the task's own result is just the signal exit (137)
+      # racing us back. Report the stall we diagnosed, not the wound we caused.
       _ ->
         {:error, :stalled,
          "no progress on #{out_path} for #{div(state.stall_timeout, 1000)}s — killed"}
@@ -193,18 +195,19 @@ defmodule Atlas.Control.Osmium do
   # dependency. Failures are swallowed: losing the child is bad, but crashing
   # this GenServer is worse, since it sits under :rest_for_one and would take
   # the applier and the service supervisors down mid-apply.
+  # Returns true when a child was actually signalled.
   defp kill_os_process do
     receive do
       {:osmium_os_pid, os_pid} ->
         System.cmd("/bin/sh", ["-c", "kill -9 #{os_pid}"], stderr_to_stdout: true)
-        :ok
+        true
     after
-      0 -> :ok
+      0 -> false
     end
   rescue
     e ->
       Logger.warning("could not kill stalled osmium: #{Exception.message(e)}")
-      :ok
+      true
   end
 
   defp flush_os_pid do

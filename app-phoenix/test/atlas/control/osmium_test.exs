@@ -132,9 +132,13 @@ defmodule Atlas.Control.OsmiumTest do
 
       Process.sleep(300)
 
-      {out, _} = System.cmd("sh", ["-c", "pgrep -f 'sleep #{marker}' | wc -l"])
+      # pgrep directly, NOT through `sh -c`: the wrapper shell's own argv would
+      # contain the pattern, and Linux procps pgrep matches its own ancestors
+      # (BSD pgrep excludes them, which is why that form passes on macOS and is
+      # permanently red on CI). Exit status 1 means nothing matched.
+      {_, status} = System.cmd("pgrep", ["-f", "sleep #{marker}"], stderr_to_stdout: true)
 
-      assert String.trim(out) == "0",
+      assert status == 1,
              "the child must be dead once we report it killed — otherwise it keeps " <>
                "writing to the data dir while the freed GenServer admits a second run"
     end
