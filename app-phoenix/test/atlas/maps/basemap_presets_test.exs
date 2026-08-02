@@ -40,6 +40,15 @@ defmodule Atlas.Maps.BasemapPresetsTest do
     end
   end
 
+  describe "preset metadata" do
+    test "the protomaps note does not promise today's build" do
+      note = Enum.find(BasemapPresets.all(), &(&1.id == "protomaps-planet-daily")).note
+
+      refute note =~ "today",
+             "the card note must not advertise a build the URL deliberately does not request"
+    end
+  end
+
   describe "resolve/1" do
     test "the protomaps preset resolves through the daily URL builder" do
       assert {:ok, %{url: url, download: true}} = BasemapPresets.resolve("protomaps-planet-daily")

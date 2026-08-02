@@ -44,7 +44,7 @@ defmodule Atlas.Maps.BasemapPresets do
     %{
       id: "protomaps-planet-daily",
       label: "Protomaps planet (daily)",
-      note: "~100 GB pmtiles · range-served by R2 · today's UTC build",
+      note: "~100 GB pmtiles · range-served by R2 · latest published UTC build",
       url: nil,
       download: true,
       url_fn: &__MODULE__.protomaps_daily_url/0
