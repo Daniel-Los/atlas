@@ -1,5 +1,5 @@
 #!/bin/sh
-# Make the bind-mounted data dir usable before the app touches it.
+# Make the bind-mounted data dirs usable before the app touches them.
 #
 # Docker creates a bind-mount source as root:root, and NAS hosts (Unraid,
 # Synology, QNAP) own it as their own "nobody" — neither of which matches the
@@ -7,49 +7,89 @@
 # bare "Permission denied" and restart-loops, which reads like a corrupt key
 # rather than an ownership mismatch.
 #
-# Started as root: take ownership of the data dir, then drop to PUID:PGID
-# (default 65534:65534) keeping the supplementary groups, so the control plane
-# still reaches the docker socket group from compose's `group_add`.
-# Started as non-root (compose `user:`): nothing to chown — just check the dir
-# is usable and say so clearly if it is not.
+# Started as root: take ownership of the data dirs, then drop to PUID:PGID
+# (default 65534:65534) keeping the docker socket group from compose's
+# `group_add` so the control plane still works.
+# Started as non-root (compose `user:`): nothing to chown — just check the
+# dirs are usable and say so clearly if they are not.
 set -eu
 
-DATA_DIR="${ATLAS_DATA_DIR:-/data}"
+# Follow DATABASE_PATH so an operator who relocates the SQLite file gets that
+# directory prepared too; ATLAS_DATA_DIR overrides both (and is what the test
+# harness uses). bin/server writes .secret_key_base into the same directory.
+DATA_DIR="${ATLAS_DATA_DIR:-$(dirname "${DATABASE_PATH:-/data/atlas.sqlite3}")}"
 PUID="${PUID:-65534}"
 PGID="${PGID:-65534}"
+
+# The app also writes region data, GTFS bundles, OTP graphs and tile packs
+# through /work/data (see Atlas.Control.RegionApplier and TilesDownloader).
+# Those are separate bind mounts, so chowning /data alone leaves "Save & apply"
+# broken with a degraded-control-plane banner.
+WORK_DATA_DIR="${ATLAS_WORK_DATA_DIR:-/work/data}"
+
+usable_dirs() {
+  for d in "$DATA_DIR" "$WORK_DATA_DIR/osm" "$WORK_DATA_DIR/gtfs" \
+           "$WORK_DATA_DIR/otp" "$WORK_DATA_DIR/tiles"; do
+    [ -d "$d" ] && echo "$d"
+  done
+}
+
+explain_unwritable() {
+  cat >&2 <<EOF
+atlas: $1 is not writable by uid $(id -u).
+
+Atlas stores its database, generated secret key and region data there, so it
+cannot boot without write access. Either:
+
+  * let the container fix it for you — start it as root (drop any \`user:\`
+    override) and set PUID/PGID to the host owner of ./data, e.g.
+        PUID=99
+        PGID=100
+  * or chown it on the host to the uid this container runs as:
+        chown -R $(id -u):$(id -g) ./data
+EOF
+}
 
 mkdir -p "$DATA_DIR" 2>/dev/null || true
 
 if [ "$(id -u)" = "0" ]; then
-  chown -R "$PUID:$PGID" "$DATA_DIR" ||
-    echo "atlas: warning: could not chown $DATA_DIR to $PUID:$PGID" >&2
+  chown_failed=""
+  for d in $(usable_dirs); do
+    chown -R "$PUID:$PGID" "$d" 2>/dev/null || chown_failed="$d"
+  done
 
-  # Carry root's supplementary groups across the drop; compose adds the docker
-  # socket's gid there and the control plane needs it.
-  groups="$(id -G | tr ' ' ',')"
+  # A failed chown is NOT survivable: exec'ing anyway lands the app in exactly
+  # the "Permission denied" restart loop this entrypoint exists to prevent.
+  # Common on NFS root_squash exports, userns-remap and rootless Podman.
+  if [ -n "$chown_failed" ]; then
+    echo "atlas: could not chown $chown_failed to $PUID:$PGID" >&2
+    explain_unwritable "$chown_failed"
+    exit 1
+  fi
+
+  # Carry the docker socket group across the drop, but NOT root's gid 0 —
+  # keeping it would leave the "dropped" process with root group access for
+  # its whole lifetime.
+  groups="$(id -G | tr ' ' '\n' | grep -vx 0 | grep -vx "$PGID" | paste -sd, -)"
+
+  if [ -n "$groups" ]; then
+    group_args="--groups=$groups"
+  else
+    group_args="--clear-groups"
+  fi
 
   exec setpriv \
     --reuid="$PUID" \
     --regid="$PGID" \
-    --groups="$groups" \
+    "$group_args" \
     -- "$@"
 fi
 
-if [ ! -w "$DATA_DIR" ]; then
-  cat >&2 <<EOF
-atlas: $DATA_DIR is not writable by uid $(id -u).
-
-The data dir holds the SQLite database and the generated secret key, so the
-app cannot boot without it. Either:
-
-  * let the container fix it for you — start it as root (drop any \`user:\`
-    override) and set PUID/PGID to the host owner of ./data/app, e.g.
-        PUID=99
-        PGID=100
-  * or chown it on the host to the uid this container runs as:
-        chown -R $(id -u):$(id -g) ./data/app
-EOF
-  exit 1
-fi
+for d in $(usable_dirs); do
+  if [ ! -w "$d" ]; then
+    explain_unwritable "$d"
+    exit 1
+  fi
+done
 
 exec "$@"

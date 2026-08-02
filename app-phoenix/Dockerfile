@@ -68,10 +68,15 @@ RUN mkdir -p /data && chown nobody:nogroup /data
 COPY --from=builder --chown=nobody:nogroup /app/_build/prod/rel/atlas ./
 
 # Starts as root only long enough to take ownership of the bind-mounted data
-# dir, then drops to PUID:PGID (default 65534:65534, i.e. the previous
+# dirs, then drops to PUID:PGID (default 65534:65534, i.e. the previous
 # `nobody`) via setpriv. Override `user:` in compose to skip that entirely —
-# the entrypoint then just verifies the dir is writable and reports clearly if
-# it is not, instead of looping on "Permission denied".
+# the entrypoint then just verifies the dirs are writable and reports clearly
+# if they are not, instead of looping on "Permission denied".
+#
+# NOTE: `docker compose exec app <cmd>` bypasses this ENTRYPOINT and therefore
+# runs as root. Prefer `docker compose exec -u 65534:65534 app …` (or your
+# PUID:PGID) for anything that writes to /data, so it does not leave
+# root-owned files the app cannot rewrite until the next restart.
 EXPOSE 4000
 ENTRYPOINT ["/app/bin/docker-entrypoint"]
 CMD ["/app/bin/server"]

@@ -105,7 +105,36 @@ assert_contains "execs the wrapped command" "$RUN_OUTPUT" "app-started"
 assert_contains "chowns the data dir to the default uid" "$RUN_CALLS" "65534:65534"
 assert_contains "drops privileges with setpriv" "$RUN_CALLS" "--reuid=65534"
 assert_contains "drops to the matching gid" "$RUN_CALLS" "--regid=65534"
-assert_contains "preserves the docker socket group" "$RUN_CALLS" "--groups=0,999"
+assert_contains "preserves the docker socket group" "$RUN_CALLS" "--groups=999"
+teardown_sandbox
+
+printf '\n== root, but chown fails (NFS root_squash / userns-remap) ==\n'
+setup_sandbox 0 "0 999"
+cat > "$BIN/chown" <<EOF
+#!/bin/sh
+echo "chown \$*" >> "$LOG"
+exit 1
+EOF
+chmod +x "$BIN/chown"
+run_entrypoint env
+assert_status "refuses to start rather than crash-looping" "$RUN_STATUS" 1
+assert_contains "explains the data dir is unusable" "$RUN_OUTPUT" "not writable"
+assert_contains "points at the PUID/PGID knob" "$RUN_OUTPUT" "PUID"
+assert_not_contains "does not start the app" "$RUN_OUTPUT" "app-started"
+teardown_sandbox
+
+printf '\n== privilege drop does not carry root gid 0 forward ==\n'
+setup_sandbox 0 "0 999"
+run_entrypoint env
+assert_not_contains "gid 0 is not in the supplementary groups" "$RUN_CALLS" "--groups=0,"
+assert_contains "the docker socket group survives" "$RUN_CALLS" "--groups=999"
+teardown_sandbox
+
+printf '\n== root with no extra groups beyond gid 0 ==\n'
+setup_sandbox 0 "0"
+run_entrypoint env
+assert_status "still starts" "$RUN_STATUS" 0
+assert_contains "clears supplementary groups rather than passing an empty list" "$RUN_CALLS" "--clear-groups"
 teardown_sandbox
 
 printf '\n== running as root with PUID/PGID (Unraid/Synology) ==\n'
