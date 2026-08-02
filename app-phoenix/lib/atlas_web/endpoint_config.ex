@@ -25,11 +25,29 @@ defmodule AtlasWeb.EndpointConfig do
   @doc "Public hostname clients reach Atlas on."
   def host(env), do: presence(env["PHX_HOST"]) || @default_host
 
-  @doc "Public scheme — `https` unless explicitly set to `http`."
+  @doc """
+  Public scheme — `https` unless explicitly set to `http`.
+
+  A misspelling raises rather than falling back to `https`: silently keeping
+  the redirect on is exactly the failure the operator was trying to escape.
+  """
   def scheme(env) do
     case presence(env["PHX_SCHEME"]) do
-      "http" -> "http"
-      _ -> @default_scheme
+      nil ->
+        @default_scheme
+
+      value ->
+        case String.downcase(value) do
+          "http" ->
+            "http"
+
+          "https" ->
+            "https"
+
+          other ->
+            raise ArgumentError,
+                  "PHX_SCHEME must be \"http\" or \"https\", got: #{inspect(other)}"
+        end
     end
   end
 
@@ -39,7 +57,18 @@ defmodule AtlasWeb.EndpointConfig do
 
     case presence(env["PHX_PORT"]) do
       nil -> if scheme == "http", do: 80, else: 443
-      value -> String.to_integer(value)
+      value -> parse_port(value)
+    end
+  end
+
+  defp parse_port(value) do
+    case Integer.parse(value) do
+      {port, ""} when port in 1..65_535 ->
+        port
+
+      _ ->
+        raise ArgumentError,
+              "PHX_PORT must be an integer between 1 and 65535, got: #{inspect(value)}"
     end
   end
 

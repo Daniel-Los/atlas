@@ -1,5 +1,6 @@
 defmodule AtlasWeb.EndpointConfigTest do
-  use ExUnit.Case, async: true
+  # Not async: the Plug.SSL cases flip the global :force_ssl application env.
+  use ExUnit.Case, async: false
 
   import Plug.Test, only: [conn: 2]
 
@@ -27,6 +28,36 @@ defmodule AtlasWeb.EndpointConfigTest do
 
       assert EndpointConfig.url(env) ==
                [host: "192.168.5.99", port: 8484, scheme: "http"]
+    end
+  end
+
+  describe "operator typos" do
+    test "PHX_SCHEME is matched case-insensitively" do
+      assert EndpointConfig.scheme(%{"PHX_SCHEME" => "HTTP"}) == "http"
+      assert EndpointConfig.scheme(%{"PHX_SCHEME" => "Http"}) == "http"
+      refute EndpointConfig.force_ssl?(%{"PHX_SCHEME" => "HTTP"})
+    end
+
+    test "an unrecognised PHX_SCHEME is rejected loudly, not silently coerced to https" do
+      assert_raise ArgumentError, ~r/PHX_SCHEME/, fn ->
+        EndpointConfig.scheme(%{"PHX_SCHEME" => "htp"})
+      end
+    end
+
+    test "a malformed PHX_PORT names the variable instead of raising from String.to_integer" do
+      err =
+        assert_raise ArgumentError, fn ->
+          EndpointConfig.port(%{"PHX_PORT" => "not-a-number"})
+        end
+
+      assert Exception.message(err) =~ "PHX_PORT"
+      assert Exception.message(err) =~ "not-a-number"
+    end
+
+    test "an out-of-range PHX_PORT is rejected" do
+      assert_raise ArgumentError, ~r/PHX_PORT/, fn ->
+        EndpointConfig.port(%{"PHX_PORT" => "70000"})
+      end
     end
   end
 
