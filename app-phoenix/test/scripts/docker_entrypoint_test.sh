@@ -39,6 +39,19 @@ assert_not_contains() {
   fi
 }
 
+# Exact whole-line match. Use this instead of assert_contains whenever the
+# expected string is a complete line: grep -F treats a newline inside the
+# pattern as a pattern separator, so an embedded one silently matches anything.
+assert_line() {
+  tests=$((tests + 1))
+  if printf '%s\n' "$2" | grep -qxF -- "$3"; then
+    pass "$1"
+  else
+    fail "$1" "expected a line exactly equal to: $3"
+    printf '    actual: %s\n' "$2"
+  fi
+}
+
 assert_status() {
   tests=$((tests + 1))
   if [ "$2" -eq "$3" ]; then
@@ -119,13 +132,16 @@ for sub in osm gtfs otp tiles; do
 done
 teardown_sandbox
 
-printf '\n== relocating DATABASE_PATH still prepares the secret-key dir ==\n'
+printf '\n== database and secret-key dirs are resolved independently ==\n'
 setup_sandbox 0 "0 999"
-mkdir -p "$DATA/db"
-run_entrypoint env DATABASE_PATH="$DATA/db/atlas.sqlite3" SECRET_KEY_BASE_PATH="$DATA/.secret_key_base"
-assert_contains "prepares the relocated database dir" "$RUN_CALLS" "$DATA/db"
-assert_contains "still prepares the secret-key dir" "$RUN_CALLS" "chown -R 65534:65534 $DATA
-"
+# Three genuinely distinct locations, so each one's contribution is visible:
+# bin/server defaults the secret key to /data no matter where the DB lives.
+mkdir -p "$SANDBOX/dbdir" "$SANDBOX/secretdir"
+run_entrypoint env \
+  DATABASE_PATH="$SANDBOX/dbdir/atlas.sqlite3" \
+  SECRET_KEY_BASE_PATH="$SANDBOX/secretdir/.secret_key_base"
+assert_line "prepares the relocated database dir" "$RUN_CALLS" "chown -R 65534:65534 $SANDBOX/dbdir"
+assert_line "prepares the secret-key dir too" "$RUN_CALLS" "chown -R 65534:65534 $SANDBOX/secretdir"
 teardown_sandbox
 
 printf '\n== DOCKER_GID=0 (macOS/OrbStack) survives the gid-0 strip ==\n'
