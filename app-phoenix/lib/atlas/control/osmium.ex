@@ -11,6 +11,8 @@ defmodule Atlas.Control.Osmium do
 
   use GenServer
 
+  require Logger
+
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -185,14 +187,24 @@ defmodule Atlas.Control.Osmium do
     end
   end
 
+  # Through `sh -c` on purpose: `System.cmd/3` execs directly, and the runner
+  # image (debian-slim) has no `kill` binary — that lives in procps, which is
+  # not installed. `kill` is a shell builtin, so this works with no new
+  # dependency. Failures are swallowed: losing the child is bad, but crashing
+  # this GenServer is worse, since it sits under :rest_for_one and would take
+  # the applier and the service supervisors down mid-apply.
   defp kill_os_process do
     receive do
       {:osmium_os_pid, os_pid} ->
-        System.cmd("kill", ["-9", Integer.to_string(os_pid)], stderr_to_stdout: true)
+        System.cmd("/bin/sh", ["-c", "kill -9 #{os_pid}"], stderr_to_stdout: true)
         :ok
     after
       0 -> :ok
     end
+  rescue
+    e ->
+      Logger.warning("could not kill stalled osmium: #{Exception.message(e)}")
+      :ok
   end
 
   defp flush_os_pid do

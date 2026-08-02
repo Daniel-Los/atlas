@@ -113,12 +113,16 @@ defmodule Atlas.Control.OsmiumTest do
       File.mkdir_p!(tmp)
       on_exit(fn -> File.rm_rf!(tmp) end)
 
-      marker = "atlas-stall-#{System.unique_integer([:positive])}"
+      # The duration IS the marker: it lands in the child's own argv, so pgrep
+      # can see it. A trailing comment would not — `exec` replaces the shell and
+      # the comment never reaches argv, which makes the pgrep assertion pass
+      # whether or not the child was actually killed.
+      marker = 4000 + rem(System.unique_integer([:positive]), 900)
 
       # The real port-spawning runner, just pointed at `sleep` so the test does
       # not need osmium installed.
       port_runner = fn _cmd, _args, opts ->
-        Osmium.spawn_and_collect("sh", ["-c", "exec sleep 30 # #{marker}"], opts)
+        Osmium.spawn_and_collect("sleep", ["#{marker}"], opts)
       end
 
       start_supervised!({Osmium, runner: port_runner, stall_timeout: 150, stall_poll: 30})
@@ -128,7 +132,7 @@ defmodule Atlas.Control.OsmiumTest do
 
       Process.sleep(300)
 
-      {out, _} = System.cmd("sh", ["-c", "pgrep -f '#{marker}' | wc -l"])
+      {out, _} = System.cmd("sh", ["-c", "pgrep -f 'sleep #{marker}' | wc -l"])
 
       assert String.trim(out) == "0",
              "the child must be dead once we report it killed — otherwise it keeps " <>
