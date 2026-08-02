@@ -13,6 +13,8 @@ defmodule Atlas.Control.DockerCompose do
 
   use GenServer
 
+  require Logger
+
   @type runner :: (String.t(), [String.t()] -> {Collectable.t(), exit_status :: non_neg_integer()})
   @type result :: {:ok, String.t()} | {:error, non_neg_integer(), String.t()}
 
@@ -84,6 +86,13 @@ defmodule Atlas.Control.DockerCompose do
     # bind-mounts the project root at /work, so point --env-file there.
     env_file = Keyword.get(opts, :env_file, default_env_file())
 
+    unless is_nil(env_file) or readable_file?(env_file) do
+      Logger.info(
+        "no readable #{env_file}; control-plane services will use compose defaults. " <>
+          "Settings from the project .env (region, UID/GID, heap) will not apply."
+      )
+    end
+
     {:ok, %{runner: runner, project_dir: project_dir, env_file: env_file}}
   end
 
@@ -105,18 +114,36 @@ defmodule Atlas.Control.DockerCompose do
   container sees it (`.:/work:ro` in compose.yml) rather than the host path in
   `--project-directory`. Override with `ATLAS_ENV_FILE`.
   """
-  def default_env_file, do: System.get_env("ATLAS_ENV_FILE") || "/work/.env"
+  def default_env_file do
+    case System.get_env("ATLAS_ENV_FILE") do
+      nil -> "/work/.env"
+      "" -> "/work/.env"
+      path -> path
+    end
+  end
+
+  @doc """
+  `--env-file` arguments for the default project `.env`, or `[]` when there
+  isn't a readable one. Shared with `Atlas.Control.LogTailer` so every compose
+  subcommand interpolates the compose file the same way.
+  """
+  def default_env_file_args, do: env_file_args(%{env_file: default_env_file()})
 
   defp project_args(%{project_dir: nil}), do: []
   defp project_args(%{project_dir: dir}), do: ["--project-directory", dir]
 
-  # Only pass the flag when the file is really there — compose errors out on a
-  # missing --env-file, and .env is optional.
+  # Only pass the flag when compose can actually read the file: it errors out on
+  # a missing --env-file, and .env is optional. Readability matters as much as
+  # existence — an unreadable file would turn a silent fallback into a hard stop.
   defp env_file_args(%{env_file: file}) when is_binary(file) do
-    if File.regular?(file), do: ["--env-file", file], else: []
+    if readable_file?(file), do: ["--env-file", file], else: []
   end
 
   defp env_file_args(_state), do: []
+
+  defp readable_file?(path) do
+    File.regular?(path) and match?({:ok, _}, File.open(path, [:read], &(&1)))
+  end
 
   defp host_project_dir do
     case System.get_env("HOST_PROJECT_DIR") do

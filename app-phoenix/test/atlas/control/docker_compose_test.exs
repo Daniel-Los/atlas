@@ -117,6 +117,29 @@ defmodule Atlas.Control.DockerComposeTest do
       assert args == ["compose", "--project-directory", "/srv/atlas", "up", "-d", "photon"]
     end
 
+    test "an unreadable .env is skipped rather than passed to compose", %{dir: dir} do
+      env_file = Path.join(dir, ".env")
+      File.write!(env_file, "COUNTRY_CODE=nl\n")
+      File.chmod!(env_file, 0o000)
+      on_exit(fn -> File.chmod(env_file, 0o600) end)
+
+      start_with(project_dir: "/srv/atlas", env_file: env_file)
+
+      assert {:ok, "ok"} = DockerCompose.start("photon")
+
+      assert_received {:stub, "docker", args}
+
+      refute "--env-file" in args,
+             "compose cannot read the file either, so passing it turns a silent fallback into a hard failure"
+    end
+
+    test "ATLAS_ENV_FILE set to empty is treated as unset" do
+      System.put_env("ATLAS_ENV_FILE", "")
+      on_exit(fn -> System.delete_env("ATLAS_ENV_FILE") end)
+
+      assert DockerCompose.default_env_file() == "/work/.env"
+    end
+
     test "defaults to the container-local mount of the project root", %{dir: dir} do
       env_file = Path.join(dir, ".env")
       File.write!(env_file, "COUNTRY_CODE=nl\n")
