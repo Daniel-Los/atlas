@@ -63,6 +63,48 @@ defmodule Atlas.Control.OsmiumTest do
                Osmium.convert_to_osm_bz2("/work/data/osm", "current.osm.pbf", "out.partial")
     end
 
+    test "a stalled convert is killed even though the call timeout is :infinity" do
+      # :infinity is right for a SLOW convert (bzip2 on a planet extract runs
+      # for hours). A HUNG one is different: without a stall check the GenServer
+      # is wedged forever and every later apply gets {:error, :busy}.
+      tmp = Path.join(System.tmp_dir!(), "osmium-stall-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      hung_runner = fn _cmd, _args, _opts ->
+        Process.sleep(5_000)
+        {"never gets here", 0}
+      end
+
+      start_supervised!({Osmium, runner: hung_runner, stall_timeout: 150, stall_poll: 30})
+
+      assert {:error, :stalled, msg} =
+               Osmium.convert_to_osm_bz2(tmp, "current.osm.pbf", "out.partial")
+
+      assert msg =~ "no progress"
+    end
+
+    test "a slow but progressing convert is not killed by the stall watchdog" do
+      tmp = Path.join(System.tmp_dir!(), "osmium-slow-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      out = Path.join(tmp, "out.partial")
+
+      growing_runner = fn _cmd, _args, _opts ->
+        Enum.each(1..6, fn n ->
+          File.write!(out, String.duplicate("x", n * 1000))
+          Process.sleep(50)
+        end)
+
+        {"done", 0}
+      end
+
+      start_supervised!({Osmium, runner: growing_runner, stall_timeout: 150, stall_poll: 30})
+
+      assert {:ok, "done"} = Osmium.convert_to_osm_bz2(tmp, "current.osm.pbf", "out.partial")
+    end
+
     test "an explicit timeout override is honoured" do
       Application.put_env(:atlas, :osmium_timeout, 20)
       on_exit(fn -> Application.delete_env(:atlas, :osmium_timeout) end)

@@ -103,7 +103,12 @@ defmodule Atlas.Control.RegionApplierTest do
       assert_receive {:apply_error, %{job_id: ^job_id, phase: :converting, reason: reason}}, 2_000
       assert reason =~ "osmium: killed"
 
-      refute_received {:restart, _}
+      assert File.read!(stale) == "seven-weeks-old",
+             "the stale bz2 stays on disk, but the apply reports failure rather than " <>
+               "letting overpass silently re-import it as if it were fresh"
+
+      assert_received {:restart, services}
+      refute "overpass" in services
     end
 
     test "a successful convert still promotes .partial to the real bz2", %{tmp: tmp} do
@@ -117,6 +122,25 @@ defmodule Atlas.Control.RegionApplierTest do
 
       assert File.read!(Path.join(tmp, "osm/current.osm.bz2")) == "bz2"
       refute File.exists?(Path.join(tmp, "osm/current.osm.bz2.partial"))
+    end
+
+    test "a failed convert still stages OTP and restarts the other ingest services",
+         %{tmp: tmp} do
+      start_applier(tmp,
+        osmium_convert: fn _dir, _in_path, _out -> {:error, 1, "osmium: killed"} end
+      )
+
+      assert {:ok, job_id} = RegionApplier.start(["berlin"])
+      assert_receive {:apply_error, %{job_id: ^job_id, phase: :converting}}, 2_000
+
+      assert File.exists?(Path.join(tmp, "otp/region.osm.pbf")),
+             "a broken overpass source must not withhold the fresh PBF from OTP"
+
+      assert_received {:restart, services},
+                      "valhalla/otp got new data and must still be restarted"
+
+      refute "overpass" in services,
+             "overpass must NOT be restarted onto a source that failed to convert"
     end
 
     test "orphaned .partial files from a previous run are swept at apply start", %{tmp: tmp} do
@@ -133,6 +157,27 @@ defmodule Atlas.Control.RegionApplierTest do
       refute File.exists?(Path.join(osm, "current.osm.pbf.partial"))
 
       assert File.read!(Path.join(osm, "current.osm.bz2")) == "bz2"
+    end
+
+    test "the sweep also clears interrupted downloads under sources/ and gtfs/", %{tmp: tmp} do
+      osm = Path.join(tmp, "osm")
+      sources = Path.join(osm, "sources")
+      gtfs = Path.join(tmp, "gtfs")
+      File.mkdir_p!(sources)
+      File.mkdir_p!(gtfs)
+
+      # A killed download leaves a multi-hundred-MB .partial; the downloader
+      # truncates on retry rather than resuming, so it is pure garbage.
+      File.write!(Path.join(sources, "berlin-latest.osm.pbf.partial"), "interrupted")
+      File.write!(Path.join(gtfs, "vbb.gtfs.zip.partial"), "interrupted")
+
+      start_applier(tmp)
+
+      assert {:ok, job_id} = RegionApplier.start(["berlin"])
+      assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+      refute File.exists?(Path.join(sources, "berlin-latest.osm.pbf.partial"))
+      refute File.exists?(Path.join(gtfs, "vbb.gtfs.zip.partial"))
     end
   end
 
