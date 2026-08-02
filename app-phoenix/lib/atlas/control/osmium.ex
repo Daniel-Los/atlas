@@ -50,6 +50,7 @@ defmodule Atlas.Control.Osmium do
     {:ok,
      %{
        runner: Keyword.get(opts, :runner, &default_runner/3),
+       command: Keyword.get(opts, :command, "osmium"),
        stall_timeout: Keyword.get(opts, :stall_timeout, stall_timeout()),
        stall_poll: Keyword.get(opts, :stall_poll, :timer.seconds(30))
      }}
@@ -57,9 +58,11 @@ defmodule Atlas.Control.Osmium do
 
   @impl true
   def handle_call({:osmium, data_dir, args}, _from, state) do
+    owner = self()
+
     task =
       Task.async(fn ->
-        state.runner.("osmium", args, cd: data_dir, stderr_to_stdout: true)
+        state.runner.(state.command, args, cd: data_dir, stderr_to_stdout: true, report_to: owner)
       end)
 
     reply =
@@ -69,6 +72,7 @@ defmodule Atlas.Control.Osmium do
         {:error, :stalled, detail} -> {:error, :stalled, detail}
       end
 
+    flush_os_pid()
     {:reply, reply, state}
   end
 
@@ -92,14 +96,29 @@ defmodule Atlas.Control.Osmium do
             do_await(task, out_path, state, size, 0)
 
           stalled_for + state.stall_poll >= state.stall_timeout ->
-            Task.shutdown(task, :brutal_kill)
-
-            {:error, :stalled,
-             "no progress on #{out_path} for #{div(state.stall_timeout, 1000)}s — killed"}
+            terminate_stalled(task, out_path, state)
 
           true ->
             do_await(task, out_path, state, size, stalled_for + state.stall_poll)
         end
+    end
+  end
+
+  defp terminate_stalled(task, out_path, state) do
+    # Kill the OS process FIRST: tearing down the Task only drops the port
+    # owner, leaving osmium alive to keep writing into the data dir while the
+    # freed GenServer lets the next apply start a second one.
+    kill_os_process()
+
+    case Task.shutdown(task, :brutal_kill) do
+      # It finished inside the race window — honour the real result rather than
+      # discarding a completed multi-hour convert as stalled.
+      {:ok, result} ->
+        {:ok, result}
+
+      _ ->
+        {:error, :stalled,
+         "no progress on #{out_path} for #{div(state.stall_timeout, 1000)}s — killed"}
     end
   end
 
@@ -127,5 +146,60 @@ defmodule Atlas.Control.Osmium do
   def stall_timeout,
     do: Application.get_env(:atlas, :osmium_stall_timeout, :timer.minutes(30))
 
-  defp default_runner(cmd, args, opts), do: System.cmd(cmd, args, opts)
+  defp default_runner(cmd, args, opts), do: spawn_and_collect(cmd, args, opts)
+
+  @doc """
+  Run `cmd` through a port and block until it exits, returning
+  `{output, exit_status}` like `System.cmd/3`.
+
+  A port rather than `System.cmd/3` because the OS pid is knowable that way:
+  `System.cmd/3` gives no handle on the child, and tearing down the calling
+  process leaves it running. When `:report_to` is a pid it receives
+  `{:osmium_os_pid, os_pid}`, which is what lets the stall watchdog kill it.
+  """
+  def spawn_and_collect(cmd, args, opts) do
+    executable = System.find_executable(cmd) || cmd
+
+    port =
+      Port.open({:spawn_executable, executable}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        :hide,
+        args: args,
+        cd: Keyword.fetch!(opts, :cd)
+      ])
+
+    with pid when is_pid(pid) <- opts[:report_to],
+         {:os_pid, os_pid} <- Port.info(port, :os_pid) do
+      send(pid, {:osmium_os_pid, os_pid})
+    end
+
+    collect_port(port, [])
+  end
+
+  defp collect_port(port, acc) do
+    receive do
+      {^port, {:data, chunk}} -> collect_port(port, [acc | chunk])
+      {^port, {:exit_status, status}} -> {IO.iodata_to_binary(acc), status}
+    end
+  end
+
+  defp kill_os_process do
+    receive do
+      {:osmium_os_pid, os_pid} ->
+        System.cmd("kill", ["-9", Integer.to_string(os_pid)], stderr_to_stdout: true)
+        :ok
+    after
+      0 -> :ok
+    end
+  end
+
+  defp flush_os_pid do
+    receive do
+      {:osmium_os_pid, _} -> flush_os_pid()
+    after
+      0 -> :ok
+    end
+  end
 end

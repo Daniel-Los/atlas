@@ -105,6 +105,45 @@ defmodule Atlas.Control.OsmiumTest do
       assert {:ok, "done"} = Osmium.convert_to_osm_bz2(tmp, "current.osm.pbf", "out.partial")
     end
 
+    test "the stall watchdog kills the real OS process, not just the Elixir task" do
+      # Task.shutdown/2 tears down the wrapper only; the port's child survives.
+      # If osmium outlives the "killed" reply it keeps writing to the data dir
+      # while the freed GenServer lets the next apply start a second one.
+      tmp = Path.join(System.tmp_dir!(), "osmium-kill-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      marker = "atlas-stall-#{System.unique_integer([:positive])}"
+
+      # The real port-spawning runner, just pointed at `sleep` so the test does
+      # not need osmium installed.
+      port_runner = fn _cmd, _args, opts ->
+        Osmium.spawn_and_collect("sh", ["-c", "exec sleep 30 # #{marker}"], opts)
+      end
+
+      start_supervised!({Osmium, runner: port_runner, stall_timeout: 150, stall_poll: 30})
+
+      assert {:error, :stalled, _} =
+               Osmium.convert_to_osm_bz2(tmp, "current.osm.pbf", "out.partial")
+
+      Process.sleep(300)
+
+      {out, _} = System.cmd("sh", ["-c", "pgrep -f '#{marker}' | wc -l"])
+
+      assert String.trim(out) == "0",
+             "the child must be dead once we report it killed — otherwise it keeps " <>
+               "writing to the data dir while the freed GenServer admits a second run"
+    end
+
+    test "spawn_and_collect reports the OS pid and returns output with the exit status" do
+      assert {"hello\n", 0} =
+               Osmium.spawn_and_collect("echo", ["hello"], cd: File.cwd!(), report_to: self())
+
+      assert_received {:osmium_os_pid, os_pid} when is_integer(os_pid)
+
+      assert {"", 3} = Osmium.spawn_and_collect("sh", ["-c", "exit 3"], cd: File.cwd!())
+    end
+
     test "an explicit timeout override is honoured" do
       Application.put_env(:atlas, :osmium_timeout, 20)
       on_exit(fn -> Application.delete_env(:atlas, :osmium_timeout) end)
