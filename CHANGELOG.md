@@ -18,6 +18,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Overpass diff updates are now opt-in so POIs can serve after an initial import without waiting on Geofabrik catch-up (#27)
 - Dokploy's minimal compose file no longer starts or exposes Overpass by default; the Overpass service and `/overpass` proxy are now commented out together as optional poster-sidecar configuration.
 
+### Added
+- **Map matching** — `POST /api/v1/map-match` snaps a recorded GPS trace onto the road network via Valhalla's Meili matcher, the inverse of `/api/v1/route`: routing invents a path between two points, matching takes a path you already walked and decides which edges you were on. Post a `shape` of `{lat, lon}` points (optionally with `time` and `accuracy`); `mode`, `shape_match` and Valhalla's `search_radius` / `gps_accuracy` / `breakage_distance` are accepted. `format=polyline6` (default) returns Valhalla's legs verbatim, matching what `/api/v1/route` already returns; `format=geojson` stitches them into one decoded `LineString`, so callers need no polyline decoder of their own. A trace Valhalla cannot match — outside the loaded region, or too sparse or too noisy — is reported as invalid input rather than as an upstream failure. Trace length is capped by `MAP_MATCH_MAX_POINTS` (default 10000), and matching gets its own `VALHALLA_MATCH_TIMEOUT` (default 60000 ms) separate from the routing timeout, since it is superlinear in point count and holds a Valhalla worker for the whole request.
+
 ## [0.3.0] - 2026-06-10
 
 ### Fixed
