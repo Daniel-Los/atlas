@@ -71,7 +71,9 @@ configs:
         }
 
         handle {
-          reverse_proxy app:4000
+          reverse_proxy app:4000 {
+            header_up X-Forwarded-Proto https
+          }
         }
       }
 
