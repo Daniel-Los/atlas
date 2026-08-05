@@ -12,9 +12,15 @@ defmodule AtlasWeb.Api.V1.TransitControllerTest do
     conn: conn,
     bypass: bypass
   } do
-    Bypass.expect_once(bypass, "GET", "/otp/routers/default/plan", fn c ->
-      assert URI.decode_query(c.query_string)["numItineraries"] == "2"
-      Plug.Conn.resp(c, 200, ~s({"plan":{"itineraries":[{"duration":600,"legs":[]}]}}))
+    Bypass.expect_once(bypass, "POST", "/otp/gtfs/v1", fn c ->
+      {:ok, body, c} = Plug.Conn.read_body(c)
+      assert Jason.decode!(body)["query"] =~ "planConnection"
+
+      Plug.Conn.resp(
+        c,
+        200,
+        ~s({"data":{"planConnection":{"edges":[{"node":{"duration":600,"legs":[]}}]}}})
+      )
     end)
 
     resp =
@@ -28,9 +34,10 @@ defmodule AtlasWeb.Api.V1.TransitControllerTest do
   end
 
   test "GET /api/v1/transit clamps num to 1..6", %{conn: conn, bypass: bypass} do
-    Bypass.expect_once(bypass, "GET", "/otp/routers/default/plan", fn c ->
-      assert URI.decode_query(c.query_string)["numItineraries"] == "6"
-      Plug.Conn.resp(c, 200, ~s({"plan":{"itineraries":[]}}))
+    Bypass.expect_once(bypass, "POST", "/otp/gtfs/v1", fn c ->
+      {:ok, body, c} = Plug.Conn.read_body(c)
+      assert Jason.decode!(body)["query"] =~ "planConnection"
+      Plug.Conn.resp(c, 200, ~s({"data":{"planConnection":{"edges":[]}}}))
     end)
 
     resp =
@@ -43,11 +50,11 @@ defmodule AtlasWeb.Api.V1.TransitControllerTest do
     conn: conn,
     bypass: bypass
   } do
-    Bypass.expect_once(bypass, "GET", "/otp/routers/default/plan", fn c ->
-      q = URI.decode_query(c.query_string)
-      assert q["date"] == "2026-05-29"
-      assert String.starts_with?(q["time"], "08:30")
-      Plug.Conn.resp(c, 200, ~s({"plan":{"itineraries":[]}}))
+    Bypass.expect_once(bypass, "POST", "/otp/gtfs/v1", fn c ->
+      {:ok, body, c} = Plug.Conn.read_body(c)
+      date_time = Jason.decode!(body)["variables"]["dateTime"]
+      assert date_time == %{"earliestDeparture" => "2026-05-29T08:30:00Z"}
+      Plug.Conn.resp(c, 200, ~s({"data":{"planConnection":{"edges":[]}}}))
     end)
 
     resp =
@@ -59,9 +66,12 @@ defmodule AtlasWeb.Api.V1.TransitControllerTest do
   end
 
   test "GET /api/v1/transit defaults modes to TRANSIT,WALK", %{conn: conn, bypass: bypass} do
-    Bypass.expect_once(bypass, "GET", "/otp/routers/default/plan", fn c ->
-      assert URI.decode_query(c.query_string)["mode"] == "TRANSIT,WALK"
-      Plug.Conn.resp(c, 200, ~s({"plan":{"itineraries":[]}}))
+    Bypass.expect_once(bypass, "POST", "/otp/gtfs/v1", fn c ->
+      {:ok, body, c} = Plug.Conn.read_body(c)
+      variables = Jason.decode!(body)["variables"]
+      assert variables["modes"]["direct"] == ["WALK"]
+      assert Enum.any?(variables["modes"]["transit"]["transit"], &(&1["mode"] == "BUS"))
+      Plug.Conn.resp(c, 200, ~s({"data":{"planConnection":{"edges":[]}}}))
     end)
 
     resp = conn |> get(~p"/api/v1/transit?from=52.5,13.4&to=52.6,13.5") |> json_response(200)

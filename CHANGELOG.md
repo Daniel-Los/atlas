@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Fixed
+- Transit planning now uses OpenTripPlanner's GraphQL API instead of the removed legacy REST endpoint (#25).
 - Region apply no longer stalls or silently serves stale POI data: the PBF→bz2 convert is no longer bounded by a 30-minute wall-clock timeout (a genuinely hung osmium is now caught by a stall watchdog instead), orphaned `.partial` files are swept from `osm/`, `osm/sources/` and `gtfs/`, and a failed conversion fails the apply loudly instead of leaving overpass on a weeks-old snapshot (#34, #28). The convert now runs after OTP staging, so a broken overpass source no longer withholds fresh data from valhalla and OTP.
 - Reverse-proxy deployments no longer loop on HTTPS redirects when TLS terminates before Caddy (#20)
 - The app no longer crash-loops when the data dir is owned by another uid: `PUID`/`PGID` are honoured, the entrypoint takes ownership before dropping privileges, and an unwritable dir reports a clear error instead of a bare `Permission denied` (#23)
