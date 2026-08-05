@@ -86,7 +86,7 @@ defmodule AtlasWeb.Api.V1.ReverseControllerTest do
   end
 
   test "POST /api/v1/reverse/batch returns 422 when over MAX_COORDS=500", %{conn: conn} do
-    coords = for n <- 1..501, do: %{lat: 52.0 + n / 10000, lon: 13.0 + n / 10000}
+    coords = for n <- 1..501, do: %{lat: 52.0 + n / 10_000, lon: 13.0 + n / 10_000}
 
     resp =
       conn

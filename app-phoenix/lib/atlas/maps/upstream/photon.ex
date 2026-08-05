@@ -1,4 +1,8 @@
 defmodule Atlas.Maps.Upstream.Photon do
+  @moduledoc """
+  Photon geocoder client — forward search and reverse lookup.
+  """
+
   alias Atlas.Maps.Upstream.Client
 
   def default do

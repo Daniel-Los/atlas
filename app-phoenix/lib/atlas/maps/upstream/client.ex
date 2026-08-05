@@ -1,4 +1,13 @@
 defmodule Atlas.Maps.Upstream.Client do
+  @moduledoc """
+  Shared HTTP client for every upstream map service.
+
+  Builds preconfigured `Req` clients — from explicit options or from
+  `<PREFIX>_URL` / `<PREFIX>_TIMEOUT` / `<PREFIX>_OPEN_TIMEOUT` env vars — and
+  normalises failures into two exceptions the contexts can match on:
+  `Unavailable` (could not connect) and `BadResponse` (connected, bad status).
+  """
+
   defmodule Unavailable do
     defexception [:message, :upstream]
   end

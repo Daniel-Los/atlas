@@ -1,0 +1,119 @@
+#!/bin/sh
+# Make the bind-mounted data dirs usable before the app touches them.
+#
+# Docker creates a bind-mount source as root:root, and NAS hosts (Unraid,
+# Synology, QNAP) own it as their own "nobody" — neither of which matches the
+# image's uid. Without this the app fails on /data/.secret_key_base with a
+# bare "Permission denied" and restart-loops, which reads like a corrupt key
+# rather than an ownership mismatch.
+#
+# Started as root: take ownership of the data dirs, then drop to PUID:PGID
+# (default 65534:65534) keeping the docker socket group from compose's
+# `group_add` so the control plane still works.
+# Started as non-root (compose `user:`): nothing to chown — just check the
+# dirs are usable and say so clearly if they are not.
+set -eu
+
+DATA_DIR="${ATLAS_DATA_DIR:-/data}"
+PUID="${PUID:-65534}"
+PGID="${PGID:-65534}"
+
+# The database and the generated secret key are relocatable independently of
+# each other, and bin/server defaults the key to /data regardless of
+# DATABASE_PATH — so prepare whichever directories they actually resolve to
+# rather than assuming they share one.
+DB_DIR="$(dirname "${DATABASE_PATH:-$DATA_DIR/atlas.sqlite3}")"
+SECRET_DIR="$(dirname "${SECRET_KEY_BASE_PATH:-/data/.secret_key_base}")"
+
+# The app also writes region data, GTFS bundles, OTP graphs and tile packs
+# through /work/data (see Atlas.Control.RegionApplier and TilesDownloader).
+# Those are separate bind mounts, so chowning /data alone leaves "Save & apply"
+# broken with a degraded-control-plane banner.
+WORK_DATA_DIR="${ATLAS_WORK_DATA_DIR:-/work/data}"
+
+usable_dirs() {
+  for d in "$DATA_DIR" "$DB_DIR" "$SECRET_DIR" "$WORK_DATA_DIR/osm" \
+           "$WORK_DATA_DIR/gtfs" "$WORK_DATA_DIR/otp" "$WORK_DATA_DIR/tiles"; do
+    [ -d "$d" ] && echo "$d"
+  done | awk '!seen[$0]++'
+}
+
+# $1 = newline-separated list of unusable dirs, $2 = uid the app will run as,
+# $3 = gid the app will run as.
+explain_unwritable() {
+  {
+    echo "atlas: these directories are not writable by uid $2:"
+    echo "$1" | sed 's/^/  /'
+    cat <<EOF
+
+Atlas stores its database, generated secret key and region data there, so it
+cannot boot without write access. Either:
+
+  * let the container fix it for you — start it as root (drop any \`user:\`
+    override) and set PUID/PGID to the host owner of ./data/app, e.g.
+        PUID=99
+        PGID=100
+  * or chown just those paths on the host to $2:$3, e.g.
+        chown -R $2:$3 ./data/app ./data/osm ./data/gtfs ./data/otp ./data/tiles
+
+    Chown ./data as a whole only if you know what else lives there — sibling
+    services such as whosonfirst run as their own uid and would break.
+EOF
+  } >&2
+}
+
+mkdir -p "$DATA_DIR" 2>/dev/null || true
+
+if [ "$(id -u)" = "0" ]; then
+  chown_failed=""
+  for d in $(usable_dirs); do
+    chown -R "$PUID:$PGID" "$d" 2>/dev/null ||
+      chown_failed="$(printf '%s\n%s' "$chown_failed" "$d" | sed '/^$/d')"
+  done
+
+  # A failed chown is NOT survivable: exec'ing anyway lands the app in exactly
+  # the "Permission denied" restart loop this entrypoint exists to prevent.
+  # Common on NFS root_squash exports, userns-remap and rootless Podman.
+  if [ -n "$chown_failed" ]; then
+    explain_unwritable "$chown_failed" "$PUID" "$PGID"
+    exit 1
+  fi
+
+  # Carry the docker socket group across the drop, but not root's own gid 0 —
+  # keeping that would leave the "dropped" process with root group access for
+  # its whole lifetime. DOCKER_GID is re-added explicitly afterwards, because
+  # on macOS (OrbStack / Docker Desktop) the socket really is gid 0 and the
+  # README tells operators to set DOCKER_GID=0.
+  groups="$(id -G | tr ' ' '\n' | grep -vx 0 | grep -vx "$PGID" | paste -sd, -)"
+
+  if [ -n "${DOCKER_GID:-}" ] && [ "$DOCKER_GID" != "$PGID" ]; then
+    case ",$groups," in
+      *",$DOCKER_GID,"*) ;;
+      *) groups="$(printf '%s,%s' "$DOCKER_GID" "$groups" | sed 's/,$//')" ;;
+    esac
+  fi
+
+  if [ -n "$groups" ]; then
+    group_args="--groups=$groups"
+  else
+    group_args="--clear-groups"
+  fi
+
+  exec setpriv \
+    --reuid="$PUID" \
+    --regid="$PGID" \
+    "$group_args" \
+    -- "$@"
+fi
+
+unwritable=""
+for d in $(usable_dirs); do
+  [ -w "$d" ] || unwritable="$(printf '%s\n%s' "$unwritable" "$d" | sed '/^$/d')"
+done
+
+if [ -n "$unwritable" ]; then
+  explain_unwritable "$unwritable" "$(id -u)" "$(id -g)"
+  exit 1
+fi
+
+exec "$@"

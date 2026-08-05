@@ -1,4 +1,8 @@
 defmodule AtlasWeb.Settings.RegionTab do
+  @moduledoc """
+  Region tab of the settings drawer — pick a region and review what applying it will change.
+  """
+
   use Phoenix.Component
 
   import AtlasWeb.IconHelpers

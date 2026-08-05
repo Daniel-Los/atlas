@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Fixed
+- The app no longer crash-loops when the data dir is owned by another uid: `PUID`/`PGID` are honoured, the entrypoint takes ownership before dropping privileges, and an unwritable dir reports a clear error instead of a bare `Permission denied` (#23)
+- Headless LAN deployments work over plain HTTP on a non-standard port: `PHX_SCHEME`, `PHX_PORT`, `FORCE_SSL` and `PHX_CHECK_ORIGIN` are now configurable, and `PHX_SCHEME=http` turns the HTTPS redirect off by default (#19)
 - The in-app control plane now reads the project `.env`, so region, UID/GID and heap settings reach control-plane-launched services instead of silently falling back to compose defaults (#22). Note: if your `.env` sets a different `COUNTRY_CODE` than the compose default, the next service start will now honour it and re-download that region's data.
 
 ## [0.3.0] - 2026-06-10

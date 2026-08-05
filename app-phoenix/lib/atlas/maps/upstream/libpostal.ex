@@ -1,4 +1,11 @@
 defmodule Atlas.Maps.Upstream.Libpostal do
+  @moduledoc """
+  libpostal client — parses a free-text address into labelled components.
+
+  Used to canonicalise a query before it reaches the geocoder; falls back to the
+  raw input when parsing yields nothing.
+  """
+
   alias Atlas.Maps.Upstream.Client
 
   def default do
@@ -9,7 +16,7 @@ defmodule Atlas.Maps.Upstream.Libpostal do
   def normalize(req \\ default(), address) when is_binary(address) do
     case Client.get(req, "/parser", [{"address", address}]) do
       {:ok, components} when is_list(components) ->
-        canonical = components |> Enum.map(& &1["value"]) |> Enum.join(" ")
+        canonical = Enum.map_join(components, " ", & &1["value"])
         %{query: if(canonical == "", do: address, else: canonical), components: components}
 
       _ ->
