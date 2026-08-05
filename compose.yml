@@ -20,11 +20,27 @@ services:
       # Phoenix runtime. Migrations run automatically on boot.
       PHX_SERVER: "true"
       PHX_HOST: ${PHX_HOST:-localhost}
+      # Public scheme/port as clients see them. Defaults target a TLS-
+      # terminating proxy; set PHX_SCHEME=http (+ PHX_PORT) for a plain-HTTP
+      # LAN deployment, which also turns the HTTPS redirect off.
+      PHX_SCHEME: ${PHX_SCHEME:-}
+      PHX_PORT: ${PHX_PORT:-}
+      FORCE_SSL: ${FORCE_SSL:-}
+      PHX_CHECK_ORIGIN: ${PHX_CHECK_ORIGIN:-}
       PORT: "4000"
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:-}
       # SQLite by default. For Postgres set DATABASE_URL=postgres://... AND use
       # an image built with ATLAS_DB_ADAPTER=postgres.
       DATABASE_PATH: ${DATABASE_PATH:-/data/atlas.sqlite3}
+      # uid:gid the app runs as, and the owner it gives ./data/app on boot.
+      # Defaults to nobody. NAS hosts own the bind dir differently (Unraid:
+      # 99:100) — set these there so the app can write its DB and secret key.
+      PUID: ${PUID:-65534}
+      PGID: ${PGID:-65534}
+      # Also readable by the entrypoint so the socket group survives the
+      # privilege drop — on macOS the socket is gid 0, which is otherwise
+      # stripped as root's own group.
+      DOCKER_GID: ${DOCKER_GID:-999}
       DATABASE_URL: ${DATABASE_URL:-}
       PHOTON_URL: http://photon:2322
       PLACEHOLDER_URL: http://placeholder:3000
@@ -120,10 +136,15 @@ services:
       build_admins: "True"
       build_elevation: ${BUILD_ELEVATION:-False}
       use_tiles_ignore_pbf: "False"
+      server_threads: ${VALHALLA_THREADS:-4}
     volumes:
       - ./data/valhalla:/custom_files
       - ./data/srtm:/custom_files/elevation_data
       - ./data/osm:/osm:ro
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     restart: unless-stopped
 
   overpass:

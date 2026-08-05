@@ -1,4 +1,8 @@
 defmodule Atlas.Maps.Upstream.Valhalla do
+  @moduledoc """
+  Valhalla routing client, for the `auto`, `bicycle` and `pedestrian` costings.
+  """
+
   alias Atlas.Maps.Upstream.Client
 
   @modes ~w[auto bicycle pedestrian]

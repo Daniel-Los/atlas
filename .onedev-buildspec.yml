@@ -1,6 +1,10 @@
 # OneDev CI — builds the Atlas app image (app-phoenix/) and pushes it to
-# OneDev's own built-in container registry (onedev.dwri.xyz). Used for
-# testing; the GHCR/production pipeline lives in .github/workflows/.
+# OneDev's own built-in container registry (onedev.dwri.xyz).
+#
+# This is the continuous build: the BranchUpdateTrigger below has no path
+# filter, so every push to main produces an image. GHCR is the opposite —
+# .github/workflows/build-app.yml only publishes from a release, so nothing
+# reaches ghcr.io until a version is cut.
 #
 # One-time setup on the OneDev side (see notes at the bottom of this file):
 #   1. Enable the built-in registry + set the server URL in System Settings.

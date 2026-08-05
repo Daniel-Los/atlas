@@ -1,4 +1,8 @@
 defmodule AtlasWeb.Settings.Atoms do
+  @moduledoc """
+  Small presentational building blocks shared across the settings tabs — eyebrows, badges, stats, progress bars and status dots.
+  """
+
   use Phoenix.Component
 
   import AtlasWeb.IconHelpers

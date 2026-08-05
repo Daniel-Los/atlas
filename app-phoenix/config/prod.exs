@@ -8,7 +8,11 @@ config :atlas, AtlasWeb.Endpoint,
     rewrite_on: [:x_forwarded_proto],
     exclude: [
       # paths: ["/health"],
-      hosts: ["localhost", "127.0.0.1"]
+      hosts: ["localhost", "127.0.0.1"],
+      # `:force_ssl` is compile-time, so FORCE_SSL=false (or PHX_SCHEME=http)
+      # cannot unplug Plug.SSL. This callback runs per request and applies the
+      # runtime setting resolved in config/runtime.exs.
+      conn: {AtlasWeb.EndpointConfig, :skip_https_redirect?, []}
     ]
   ]
 

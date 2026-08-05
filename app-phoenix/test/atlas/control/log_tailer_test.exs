@@ -51,6 +51,25 @@ defmodule Atlas.Control.LogTailerTest do
     assert args == ["compose", "logs", "-f", "--tail=200", "photon"]
   end
 
+  test "default args pass the same --env-file as DockerCompose" do
+    dir = Path.join(System.tmp_dir!(), "tailer-env-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    env_file = Path.join(dir, ".env")
+    File.write!(env_file, "COUNTRY_CODE=nl\n")
+    System.put_env("ATLAS_ENV_FILE", env_file)
+
+    on_exit(fn ->
+      System.delete_env("ATLAS_ENV_FILE")
+      File.rm_rf!(dir)
+    end)
+
+    args = LogTailer.default_args("photon")
+
+    assert Enum.chunk_every(args, 2, 1) |> Enum.member?(["--env-file", env_file]),
+           "compose interpolates the whole file for every subcommand; without --env-file " <>
+             "`logs` resolves variables differently from `up` and warns on each one"
+  end
+
   test "default args resolve the compose project against HOST_PROJECT_DIR" do
     System.put_env("HOST_PROJECT_DIR", "/srv/atlas")
     on_exit(fn -> System.delete_env("HOST_PROJECT_DIR") end)

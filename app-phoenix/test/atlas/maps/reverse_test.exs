@@ -1,6 +1,6 @@
 defmodule Atlas.Maps.ReverseTest do
   use ExUnit.Case, async: false
-  alias Atlas.Maps.{Reverse, Result}
+  alias Atlas.Maps.{Result, Reverse}
 
   setup do
     bypass = Bypass.open()

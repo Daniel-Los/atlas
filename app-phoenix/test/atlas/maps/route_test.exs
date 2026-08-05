@@ -1,6 +1,6 @@
 defmodule Atlas.Maps.RouteTest do
   use ExUnit.Case, async: false
-  alias Atlas.Maps.{Route, Result}
+  alias Atlas.Maps.{Result, Route}
 
   setup do
     bypass = Bypass.open()

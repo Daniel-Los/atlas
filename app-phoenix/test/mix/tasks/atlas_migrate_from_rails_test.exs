@@ -3,10 +3,10 @@ defmodule Mix.Tasks.Atlas.MigrateFromRailsTest do
 
   import ExUnit.CaptureIO
 
-  alias Atlas.Repo
-  alias Atlas.Settings
   alias Atlas.Control.RegionSelection
   alias Atlas.Control.Service
+  alias Atlas.Repo
+  alias Atlas.Settings
 
   @sentinel_key "migrated_from_rails_at"
 
