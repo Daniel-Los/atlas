@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 - The app no longer crash-loops when the data dir is owned by another uid: `PUID`/`PGID` are honoured, the entrypoint takes ownership before dropping privileges, and an unwritable dir reports a clear error instead of a bare `Permission denied` (#23)
+- Headless LAN deployments work over plain HTTP on a non-standard port: `PHX_SCHEME`, `PHX_PORT`, `FORCE_SSL` and `PHX_CHECK_ORIGIN` are now configurable, and `PHX_SCHEME=http` turns the HTTPS redirect off by default (#19)
 
 ## [0.3.0] - 2026-06-10
 
