@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Fixed
+- Region apply no longer stalls or silently serves stale POI data: the PBF→bz2 convert is no longer bounded by a 30-minute wall-clock timeout (a genuinely hung osmium is now caught by a stall watchdog instead), orphaned `.partial` files are swept from `osm/`, `osm/sources/` and `gtfs/`, and a failed conversion fails the apply loudly instead of leaving overpass on a weeks-old snapshot (#34, #28). The convert now runs after OTP staging, so a broken overpass source no longer withholds fresh data from valhalla and OTP.
 - Reverse-proxy deployments no longer loop on HTTPS redirects when TLS terminates before Caddy (#20)
 - The app no longer crash-loops when the data dir is owned by another uid: `PUID`/`PGID` are honoured, the entrypoint takes ownership before dropping privileges, and an unwritable dir reports a clear error instead of a bare `Permission denied` (#23)
 - Headless LAN deployments work over plain HTTP on a non-standard port: `PHX_SCHEME`, `PHX_PORT`, `FORCE_SSL` and `PHX_CHECK_ORIGIN` are now configurable, and `PHX_SCHEME=http` turns the HTTPS redirect off by default (#19)
