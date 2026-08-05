@@ -255,8 +255,8 @@ tiles-download: ## Fetch a PMTiles basemap. Defaults to TILES_URL from .env. Use
 	echo "Done: $$(du -sh $$target | cut -f1)"
 
 .PHONY: tiles-protomaps-latest
-tiles-protomaps-latest: ## Fetch today's Protomaps planet PMTiles (~100 GB) — works only for builds <30 days old
-	@latest=$$(date -u +%Y%m%d); \
+tiles-protomaps-latest: ## Fetch the latest published Protomaps planet PMTiles (~100 GB) — works only for builds <30 days old
+	@latest=$$(date -u -d '1 day ago' +%Y%m%d 2>/dev/null || date -u -v-1d +%Y%m%d); \
 	url="https://build.protomaps.com/$$latest.pmtiles"; \
 	$(MAKE) tiles-download URL=$$url
 

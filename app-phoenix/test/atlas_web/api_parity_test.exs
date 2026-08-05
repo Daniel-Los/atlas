@@ -71,8 +71,8 @@ defmodule AtlasWeb.ApiParityTest do
       Plug.Conn.resp(c, 200, ~s({"trip":{"summary":{"length":1.0}}}))
     end)
 
-    Bypass.stub(bypass, "GET", "/otp/routers/default/plan", fn c ->
-      Plug.Conn.resp(c, 200, ~s({"plan":{"itineraries":[]}}))
+    Bypass.stub(bypass, "POST", "/otp/gtfs/v1", fn c ->
+      Plug.Conn.resp(c, 200, ~s({"data":{"planConnection":{"edges":[]}}}))
     end)
 
     Bypass.stub(bypass, "POST", "/api/interpreter", fn c ->

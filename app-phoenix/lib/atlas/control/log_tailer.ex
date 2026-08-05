@@ -15,6 +15,7 @@ defmodule Atlas.Control.LogTailer do
   # `docker compose logs` in a tight loop when the CLI is broken.
   use GenServer, restart: :transient
 
+  alias Atlas.Control.DockerCompose
   alias Phoenix.PubSub
 
   @line_max_bytes 8192
@@ -48,7 +49,10 @@ defmodule Atlas.Control.LogTailer do
   compose project the host uses.
   """
   def default_args(name) do
-    ["compose"] ++ project_dir_args() ++ ["logs", "-f", "--tail=200", name]
+    ["compose"] ++
+      project_dir_args() ++
+      DockerCompose.default_env_file_args() ++
+      ["logs", "-f", "--tail=200", name]
   end
 
   defp project_dir_args do
