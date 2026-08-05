@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      # Needed to dispatch build-app.yml — see the last step.
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,3 +106,15 @@ jobs:
           gh release create "${TAG}" \
             --title "${TAG}" \
             --notes-file /tmp/release-body.md
+
+      - name: Build the release image
+        if: steps.parse.outputs.skip == 'false' && steps.exists.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.parse.outputs.tag }}
+        run: |
+          # The release above was created with GITHUB_TOKEN, and GitHub does not
+          # raise workflow-triggering events for anything GITHUB_TOKEN does — so
+          # build-app.yml never sees a `release` event from it. workflow_dispatch
+          # is the documented exception to that rule, so trigger it by hand.
+          gh workflow run build-app.yml --ref "${TAG}"

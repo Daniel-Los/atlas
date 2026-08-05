@@ -27,22 +27,14 @@ defmodule Atlas.Control.Parsers.OTP do
 
     new_acc =
       cond do
-        Regex.match?(@ready_re, line) or Regex.match?(@serve_re, line) ->
+        serving?(line) ->
           %{acc | phase: "ready", ready: true, progress: 1.0}
 
         Regex.match?(@error_re, line) ->
           %{acc | phase: "error", ready: false}
 
         match = Regex.run(@street_graph_re, line) ->
-          [_, _of, _total, pct_str] = match
-
-          progress =
-            case Integer.parse(pct_str) do
-              {pct, _} -> 0.3 + pct / 100.0 * 0.5
-              :error -> acc.progress
-            end
-
-          %{acc | phase: "building-graph", progress: progress}
+          %{acc | phase: "building-graph", progress: graph_progress(match, acc.progress)}
 
         Regex.match?(@trip_patterns_re, line) ->
           %{acc | phase: "trip-patterns", progress: max_progress(acc.progress, 0.7)}
@@ -61,6 +53,15 @@ defmodule Atlas.Control.Parsers.OTP do
       end
 
     {new_acc, new_acc}
+  end
+
+  defp serving?(line), do: Regex.match?(@ready_re, line) or Regex.match?(@serve_re, line)
+
+  defp graph_progress([_, _of, _total, pct_str], fallback) do
+    case Integer.parse(pct_str) do
+      {pct, _} -> 0.3 + pct / 100.0 * 0.5
+      :error -> fallback
+    end
   end
 
   defp max_progress(nil, floor), do: floor

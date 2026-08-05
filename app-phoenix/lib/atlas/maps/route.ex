@@ -1,5 +1,12 @@
 defmodule Atlas.Maps.Route do
-  alias Atlas.Maps.{Result, Upstream.Valhalla, Upstream.Client}
+  @moduledoc """
+  Point-to-point routing via Valhalla.
+
+  Wraps `Atlas.Maps.Upstream.Valhalla` and normalises its response into a
+  `Atlas.Maps.Result`.
+  """
+
+  alias Atlas.Maps.{Result, Upstream.Client, Upstream.Valhalla}
   require Logger
 
   @doc """

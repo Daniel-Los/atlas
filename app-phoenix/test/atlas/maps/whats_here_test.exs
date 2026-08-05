@@ -1,13 +1,13 @@
 defmodule Atlas.Maps.WhatsHereTest do
   use ExUnit.Case, async: false
-  alias Atlas.Maps.{WhatsHere, Result}
+  alias Atlas.Maps.{Result, WhatsHere}
 
   setup do
     bypass = Bypass.open()
     System.put_env("PHOTON_URL", "http://localhost:#{bypass.port}")
     System.put_env("PLACEHOLDER_URL", "http://localhost:#{bypass.port}")
     System.put_env("OVERPASS_URL", "http://localhost:#{bypass.port}")
-    on_exit(fn -> ["PHOTON_URL","PLACEHOLDER_URL","OVERPASS_URL"] |> Enum.each(&System.delete_env/1) end)
+    on_exit(fn -> Enum.each(["PHOTON_URL", "PLACEHOLDER_URL", "OVERPASS_URL"], &System.delete_env/1) end)
     {:ok, bypass: bypass}
   end
 

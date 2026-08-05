@@ -2,7 +2,7 @@ defmodule Atlas.Control.Jobs.UpdateServiceTest do
   use Atlas.DataCase, async: false
   use Oban.Testing, repo: Atlas.Repo
 
-  alias Atlas.Control.{DockerCompose, Service, Jobs.UpdateService}
+  alias Atlas.Control.{DockerCompose, Jobs.UpdateService, Service}
 
   setup do
     start_supervised!({Oban, Application.fetch_env!(:atlas, Oban) |> Keyword.put(:testing, :manual)})
