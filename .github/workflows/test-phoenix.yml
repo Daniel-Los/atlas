@@ -34,3 +34,6 @@ jobs:
       # --include parity activates the byte-diff gate against the committed
       # Rails goldens, enforcing API parity with the legacy Rails app.
       - run: mix test --include parity
+      # The release entrypoint is shell, so it is covered by a shell test that
+      # stubs id/chown/setpriv rather than by ExUnit.
+      - run: sh test/scripts/docker_entrypoint_test.sh

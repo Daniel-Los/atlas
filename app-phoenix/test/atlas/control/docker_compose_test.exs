@@ -71,6 +71,91 @@ defmodule Atlas.Control.DockerComposeTest do
                      ["compose", "--project-directory", "/srv/atlas", "up", "-d", "photon"]}
   end
 
+  describe "project .env" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "compose-env-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      {:ok, dir: dir}
+    end
+
+    defp start_with(opts) do
+      test_pid = self()
+      runner = fn cmd, args -> send(test_pid, {:stub, cmd, args}) && {"ok", 0} end
+      start_supervised!({DockerCompose, [runner: runner] ++ opts})
+    end
+
+    test "passes --env-file so services inherit the operator's .env", %{dir: dir} do
+      env_file = Path.join(dir, ".env")
+      File.write!(env_file, "COUNTRY_CODE=nl\n")
+
+      start_with(project_dir: "/srv/atlas", env_file: env_file)
+
+      assert {:ok, "ok"} = DockerCompose.start("photon")
+
+      assert_received {:stub, "docker", args}
+
+      assert args == [
+               "compose",
+               "--project-directory",
+               "/srv/atlas",
+               "--env-file",
+               env_file,
+               "up",
+               "-d",
+               "photon"
+             ]
+    end
+
+    test "omits --env-file when the project has no .env", %{dir: dir} do
+      start_with(project_dir: "/srv/atlas", env_file: Path.join(dir, ".env"))
+
+      assert {:ok, "ok"} = DockerCompose.start("photon")
+
+      assert_received {:stub, "docker", args}
+      refute "--env-file" in args
+      assert args == ["compose", "--project-directory", "/srv/atlas", "up", "-d", "photon"]
+    end
+
+    test "an unreadable .env is skipped rather than passed to compose", %{dir: dir} do
+      env_file = Path.join(dir, ".env")
+      File.write!(env_file, "COUNTRY_CODE=nl\n")
+      File.chmod!(env_file, 0o000)
+      on_exit(fn -> File.chmod(env_file, 0o600) end)
+
+      start_with(project_dir: "/srv/atlas", env_file: env_file)
+
+      assert {:ok, "ok"} = DockerCompose.start("photon")
+
+      assert_received {:stub, "docker", args}
+
+      refute "--env-file" in args,
+             "compose cannot read the file either, so passing it turns a silent fallback into a hard failure"
+    end
+
+    test "ATLAS_ENV_FILE set to empty is treated as unset" do
+      System.put_env("ATLAS_ENV_FILE", "")
+      on_exit(fn -> System.delete_env("ATLAS_ENV_FILE") end)
+
+      assert DockerCompose.default_env_file() == "/work/.env"
+    end
+
+    test "defaults to the container-local mount of the project root", %{dir: dir} do
+      env_file = Path.join(dir, ".env")
+      File.write!(env_file, "COUNTRY_CODE=nl\n")
+
+      # /work is where compose.yml bind-mounts the project root (`.:/work:ro`),
+      # so the .env the operator edited is readable from inside the container
+      # even though --project-directory names a host path.
+      assert DockerCompose.default_env_file() == "/work/.env"
+
+      start_with(project_dir: "/srv/atlas", env_file: env_file)
+      assert {:ok, "ok"} = DockerCompose.start("photon")
+      assert_received {:stub, "docker", args}
+      assert "--env-file" in args
+    end
+  end
+
   test "running?/1 is true when `compose ps` lists a running container" do
     start_compose({"3f2a1b\n", 0})
 

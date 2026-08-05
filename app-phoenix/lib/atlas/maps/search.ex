@@ -1,13 +1,20 @@
 defmodule Atlas.Maps.Search do
+  @moduledoc """
+  Forward geocoding and autocomplete.
+
+  Resolves free-text queries to places through Photon, with Libpostal used to
+  normalise the query and Placeholder to fill in coarse administrative context.
+  """
+
   require Logger
 
   alias Atlas.Maps.{
     Place,
     Result,
+    Upstream.Client,
     Upstream.Libpostal,
     Upstream.Photon,
-    Upstream.Placeholder,
-    Upstream.Client
+    Upstream.Placeholder
   }
 
   def autocomplete(opts) do

@@ -81,7 +81,7 @@ defmodule AtlasWeb.Api.V1.PoisControllerTest do
 
     types = resp["meta"]["types"]
     assert is_list(types)
-    assert length(types) > 0
+    assert types != []
     assert length(types) <= 2
 
     pinned_ids = Atlas.Maps.Poi.Catalog.pinned() |> Enum.take(2) |> Enum.map(& &1.id)

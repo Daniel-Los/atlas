@@ -1,4 +1,12 @@
 defmodule Atlas.Maps.Upstream.Placeholder do
+  @moduledoc """
+  Placeholder client — coarse administrative lookup.
+
+  Resolves a text query to its country/state/county/city/postcode lineage, used
+  to enrich geocoding results. Returns `nil` rather than an error: this is
+  supplementary context, never the primary answer.
+  """
+
   alias Atlas.Maps.Upstream.Client
 
   def default do

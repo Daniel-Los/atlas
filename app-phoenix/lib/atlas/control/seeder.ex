@@ -11,9 +11,9 @@ defmodule Atlas.Control.Seeder do
       already registered.
   """
 
-  alias Atlas.Repo
-  alias Atlas.Control.{Service, ServiceSupervisor}
   alias Atlas.Control.Parsers
+  alias Atlas.Control.{Service, ServiceSupervisor}
+  alias Atlas.Repo
 
   @services [
     %{name: "photon", profile: "geocoding", parser: Parsers.Photon},
