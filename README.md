@@ -22,16 +22,34 @@ docker compose up -d
 
 That's it — no `.env` file required. The app auto-generates a `SECRET_KEY_BASE` on first boot (persisted to `data/app/.secret_key_base`) and stores its data in a local SQLite file under `data/app/`.
 
-One knob you may need: the in-app control plane talks to the host docker
-socket as the `nobody` user via the `DOCKER_GID` supplementary group
-(default `999`). If the Settings panel shows a "Control plane degraded"
-banner, set it to the socket's group and recreate the container:
+Two knobs you may need:
+
+**`DOCKER_GID`** — the in-app control plane talks to the host docker socket as
+the `nobody` user via this supplementary group (default `999`). If the Settings
+panel shows a "Control plane degraded" banner, set it to the socket's group and
+recreate the container:
 
 ```bash
 # Linux
 echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" >> .env
 # macOS (OrbStack / Docker Desktop) — the socket maps as gid 0
 echo "DOCKER_GID=0" >> .env
+docker compose up -d app
+```
+
+**`PUID` / `PGID`** — the uid:gid Atlas runs as, and the owner it gives its own
+data directories on boot: `./data/app` plus the region dirs `./data/{osm,gtfs,otp,tiles}`
+(default `65534:65534`, i.e. `nobody`). Other services under `./data` keep their
+own ownership — `whosonfirst`, for instance, runs as `${UID:-1001}`.
+
+On a NAS the appdata share usually belongs to someone else — Unraid uses
+`99:100`, Synology and QNAP differ — and Atlas will refuse to start with a
+message naming the directories rather than looping on "Permission denied". Set
+them to the share's owner:
+
+```bash
+stat -c '%u %g' ./data/app      # whoever owns it on the host
+printf 'PUID=99\nPGID=100\n' >> .env
 docker compose up -d app
 ```
 

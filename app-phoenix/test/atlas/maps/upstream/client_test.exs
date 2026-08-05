@@ -1,7 +1,7 @@
 defmodule Atlas.Maps.Upstream.ClientTest do
   use ExUnit.Case, async: true
   alias Atlas.Maps.Upstream.Client
-  alias Atlas.Maps.Upstream.Client.{Unavailable, BadResponse}
+  alias Atlas.Maps.Upstream.Client.{BadResponse, Unavailable}
 
   setup do
     bypass = Bypass.open()

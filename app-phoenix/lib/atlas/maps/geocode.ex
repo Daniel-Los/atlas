@@ -3,7 +3,7 @@ defmodule Atlas.Maps.Geocode do
   Dual-mode geocode dispatch — forward via Search (when `q` is given) or
   reverse via Reverse (when `lat+lon` are given). Mirrors Rails behavior.
   """
-  alias Atlas.Maps.{Search, Reverse}
+  alias Atlas.Maps.{Reverse, Search}
 
   @doc """
   Returns one of:

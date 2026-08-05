@@ -1,9 +1,13 @@
 defmodule AtlasWeb.SettingsPanel do
+  @moduledoc """
+  Live component hosting the settings drawer and its tab bar.
+  """
+
   use AtlasWeb, :live_component
 
   import AtlasWeb.Settings.Atoms
 
-  alias Atlas.Control.{RegionCatalog, RegionSelection, Seeder, ServiceFormatting}
+  alias Atlas.Control.{Preflight, RegionCatalog, RegionSelection, Seeder, ServiceFormatting}
   alias Atlas.Maps.BasemapPresets
   alias Atlas.Repo
   alias AtlasWeb.Settings
@@ -55,7 +59,7 @@ defmodule AtlasWeb.SettingsPanel do
   end
 
   defp preflight_failures do
-    Atlas.Control.Preflight.results() |> Atlas.Control.Preflight.failures()
+    Preflight.results() |> Preflight.failures()
   rescue
     _ -> []
   end
@@ -120,7 +124,7 @@ defmodule AtlasWeb.SettingsPanel do
   def handle_event("preflight_recheck", _params, socket) do
     failures =
       try do
-        Atlas.Control.Preflight.refresh() |> Atlas.Control.Preflight.failures()
+        Preflight.refresh() |> Preflight.failures()
       rescue
         _ -> []
       end

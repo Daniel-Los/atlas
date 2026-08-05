@@ -1,7 +1,7 @@
 defmodule AtlasWeb.Admin.ServicesLive do
   use AtlasWeb, :live_view
 
-  alias Atlas.Control.{Safe, Service, ServiceSchedule, ServiceState, Seeder, Jobs}
+  alias Atlas.Control.{Jobs, Safe, Seeder, Service, ServiceSchedule, ServiceState}
   alias Atlas.Repo
 
   @impl true

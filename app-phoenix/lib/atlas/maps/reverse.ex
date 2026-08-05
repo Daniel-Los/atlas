@@ -33,7 +33,7 @@ defmodule Atlas.Maps.Reverse do
       {:error, :too_many, 500}
   """
   require Logger
-  alias Atlas.Maps.{Place, Result, Upstream.Photon, Upstream.Placeholder, Upstream.Client}
+  alias Atlas.Maps.{Place, Result, Upstream.Client, Upstream.Photon, Upstream.Placeholder}
 
   @max_coords 500
   @grid_decimals 4

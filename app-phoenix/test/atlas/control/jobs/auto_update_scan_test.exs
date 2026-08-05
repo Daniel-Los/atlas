@@ -2,7 +2,7 @@ defmodule Atlas.Control.Jobs.AutoUpdateScanTest do
   use Atlas.DataCase, async: false
   use Oban.Testing, repo: Atlas.Repo
 
-  alias Atlas.Control.{Service, Jobs.AutoUpdateScan, Jobs.UpdateService}
+  alias Atlas.Control.{Jobs.AutoUpdateScan, Jobs.UpdateService, Service}
 
   setup do
     start_supervised!({Oban, Application.fetch_env!(:atlas, Oban) |> Keyword.put(:testing, :manual)})
