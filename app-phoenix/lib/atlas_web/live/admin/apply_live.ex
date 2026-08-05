@@ -3,8 +3,8 @@ defmodule AtlasWeb.Admin.ApplyLive do
 
   import Ecto.Query
 
-  alias Atlas.Repo
   alias Atlas.Control.{RegionApplier, RegionCatalog, RegionSelection, Safe}
+  alias Atlas.Repo
   import AtlasWeb.AdminErrorComponents
 
   @impl true

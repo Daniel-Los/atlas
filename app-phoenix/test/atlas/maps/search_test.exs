@@ -1,6 +1,6 @@
 defmodule Atlas.Maps.SearchTest do
   use ExUnit.Case, async: false
-  alias Atlas.Maps.{Search, Result}
+  alias Atlas.Maps.{Result, Search}
 
   setup do
     bypass = Bypass.open()

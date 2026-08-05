@@ -7,7 +7,7 @@ defmodule Atlas.Maps.ReverseBatchTest do
     bypass = Bypass.open()
     System.put_env("PHOTON_URL", "http://localhost:#{bypass.port}")
     System.put_env("PLACEHOLDER_URL", "http://localhost:#{bypass.port}")
-    on_exit(fn -> System.delete_env("PHOTON_URL"); System.delete_env("PLACEHOLDER_URL") end)
+    on_exit(fn -> Enum.each(["PHOTON_URL", "PLACEHOLDER_URL"], &System.delete_env/1) end)
     {:ok, bypass: bypass}
   end
 
@@ -46,7 +46,7 @@ defmodule Atlas.Maps.ReverseBatchTest do
   end
 
   test "batch returns {:error, :too_many, 500} when over MAX_COORDS=500" do
-    coords = for n <- 1..501, do: %{lat: 52.0 + n / 10000, lon: 13.0 + n / 10000}
+    coords = for n <- 1..501, do: %{lat: 52.0 + n / 10_000, lon: 13.0 + n / 10_000}
     assert {:error, :too_many, 500} = Reverse.batch(%{coords: coords})
   end
 

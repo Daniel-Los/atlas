@@ -11,8 +11,8 @@ defmodule AtlasWeb.Admin.RegionsController do
 
   import Ecto.Query
 
-  alias Atlas.Repo
   alias Atlas.Control.{RegionCatalog, RegionSelection}
+  alias Atlas.Repo
 
   def show(conn, _params) do
     json(conn, %{data: current_state()})

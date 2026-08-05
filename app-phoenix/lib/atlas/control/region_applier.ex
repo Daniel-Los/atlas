@@ -7,8 +7,11 @@ defmodule Atlas.Control.RegionApplier do
     2. download GTFS bundles into `gtfs/` (failure is non-fatal)
     3. materialise `osm/current.osm.pbf` — relative symlink for one source,
        `osmium merge` via `.partial` + rename for several
-    4. convert to `osm/current.osm.bz2` for overpass (failure is non-fatal)
-    5. stage OTP inputs (`otp/region.osm.pbf` + GTFS zips, drop `graph.obj`)
+    4. stage OTP inputs (`otp/region.osm.pbf` + GTFS zips, drop `graph.obj`)
+    5. convert to `osm/current.osm.bz2` for overpass — last, because it only
+       feeds overpass and can run for hours. Failure is fatal to the apply (a
+       swallowed one would leave overpass importing a stale snapshot silently)
+       but the other services still get restarted onto their fresh data.
     6. `docker compose restart` the enabled ingest services
 
   All paths are container-local under `data_dir` (default `/work/data`) — no
@@ -164,13 +167,24 @@ defmodule Atlas.Control.RegionApplier do
     gtfs_dir = Path.join(state.data_dir, "gtfs")
     File.mkdir_p!(sources_dir)
     File.mkdir_p!(gtfs_dir)
+    Enum.each([osm_dir, sources_dir, gtfs_dir], &sweep_partials/1)
 
     with {:ok, sources} <- download_pbfs(state, job_id, entries, sources_dir),
          :ok <- download_gtfs(state, job_id, entries, gtfs_dir),
          :ok <- materialize_current(state, job_id, osm_dir, sources_dir, sources),
-         :ok <- convert_for_overpass(state, job_id, osm_dir),
          :ok <- stage_otp(state, job_id, osm_dir, gtfs_dir) do
-      restart_services(state, job_id)
+      # Convert last: it only feeds overpass, and it is the one stage that can
+      # take hours. Everything valhalla and OTP need is already on disk, so a
+      # failed conversion still fails the apply (loudly — see #28) but does not
+      # withhold fresh data from the services that are ready for it.
+      case convert_for_overpass(state, job_id, osm_dir) do
+        :ok ->
+          restart_services(state, job_id, @ingest_services)
+
+        {:error, _phase, _reason} = error ->
+          restart_services(state, job_id, @ingest_services -- ["overpass"])
+          error
+      end
     end
   end
 
@@ -252,15 +266,51 @@ defmodule Atlas.Control.RegionApplier do
   defp convert_for_overpass(state, job_id, osm_dir) do
     progress(state, job_id, :converting, %{region: nil, progress: nil})
     bz2 = Path.join(osm_dir, "current.osm.bz2")
+    partial = bz2 <> ".partial"
 
-    # Non-fatal, mirroring the Go sidecar: overpass simply keeps its previous
-    # snapshot if the conversion fails.
+    # Fatal on purpose: a swallowed failure leaves the previous (possibly
+    # weeks-old) current.osm.bz2 in place, and overpass re-imports it with no
+    # indication the refresh never happened.
     case state.osmium_convert.(osm_dir, "current.osm.pbf", "current.osm.bz2.partial") do
-      {:ok, _} -> File.rename(bz2 <> ".partial", bz2)
-      {:error, _code, _output} -> :ok
-    end
+      {:ok, _} ->
+        case File.rename(partial, bz2) do
+          :ok ->
+            :ok
 
-    :ok
+          {:error, reason} ->
+            Logger.error("overpass source conversion reported success but #{partial} is missing")
+            {:error, :converting, {:promote, reason}}
+        end
+
+      {:error, code, output} ->
+        File.rm(partial)
+
+        Logger.error(
+          "overpass source conversion failed (#{format_exit(code)}); " <>
+            "#{bz2} left untouched and may be stale: #{output}"
+        )
+
+        {:error, :converting, {code, output}}
+    end
+  end
+
+  # An interrupted merge/convert (restart, OOM, kill) strands a multi-hundred-MB
+  # `.partial`. Sweep before writing new ones so they neither accumulate nor get
+  # mistaken for a completed artifact.
+  defp sweep_partials(osm_dir) do
+    case File.ls(osm_dir) do
+      {:ok, entries} ->
+        for name <- entries, String.ends_with?(name, ".partial") do
+          path = Path.join(osm_dir, name)
+          Logger.info("removing orphaned partial from an interrupted run: #{path}")
+          File.rm(path)
+        end
+
+        :ok
+
+      {:error, _reason} ->
+        :ok
+    end
   end
 
   defp stage_otp(state, job_id, osm_dir, gtfs_dir) do
@@ -293,10 +343,10 @@ defmodule Atlas.Control.RegionApplier do
     end)
   end
 
-  defp restart_services(state, job_id) do
+  defp restart_services(state, job_id, services) do
     progress(state, job_id, :restarting, %{region: nil, progress: nil})
 
-    case state.restart.(@ingest_services) do
+    case state.restart.(services) do
       :ok -> :ok
       {:error, reason} -> {:error, :restarting, reason}
     end
@@ -336,6 +386,11 @@ defmodule Atlas.Control.RegionApplier do
   defp format_reason({url, reason}) when is_binary(url), do: "#{url}: #{format_reason(reason)}"
   defp format_reason({:http_status, status}), do: "HTTP #{status}"
   defp format_reason({code, output}) when is_integer(code), do: "exit #{code}: #{output}"
+  defp format_reason({:stalled, detail}), do: "stalled: #{detail}"
   defp format_reason(%{__exception__: true} = e), do: Exception.message(e)
   defp format_reason(other), do: inspect(other)
+
+  defp format_exit(code) when is_integer(code), do: "exit #{code}"
+  defp format_exit(:stalled), do: "stalled"
+  defp format_exit(other), do: inspect(other)
 end

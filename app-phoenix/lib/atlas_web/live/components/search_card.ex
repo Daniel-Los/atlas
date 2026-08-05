@@ -1,4 +1,8 @@
 defmodule AtlasWeb.SearchCard do
+  @moduledoc """
+  The search input card and its result list.
+  """
+
   use Phoenix.Component
 
   import AtlasWeb.IconHelpers

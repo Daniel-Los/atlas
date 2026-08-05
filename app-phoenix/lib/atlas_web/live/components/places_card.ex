@@ -1,4 +1,8 @@
 defmodule AtlasWeb.PlacesCard do
+  @moduledoc """
+  Live component listing nearby places for the selected POI categories.
+  """
+
   use AtlasWeb, :live_component
 
   alias Atlas.Maps.Poi.Catalog

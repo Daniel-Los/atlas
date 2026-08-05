@@ -66,9 +66,13 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
-  host = System.get_env("PHX_HOST") || "example.com"
+  env = System.get_env()
 
   config :atlas, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+
+  # Read back by AtlasWeb.EndpointConfig.skip_https_redirect?/1, the runtime
+  # gate on the compile-time Plug.SSL. See config/prod.exs.
+  config :atlas, :force_ssl, AtlasWeb.EndpointConfig.force_ssl?(env)
 
   # Docker bridge networks are IPv4, so bind 0.0.0.0 by default — binding the
   # IPv6 wildcard (::) refuses IPv4 connections on hosts without dual-stack.
@@ -79,7 +83,8 @@ if config_env() == :prod do
       else: {0, 0, 0, 0}
 
   config :atlas, AtlasWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
+    url: AtlasWeb.EndpointConfig.url(env),
+    check_origin: AtlasWeb.EndpointConfig.check_origin(env),
     http: [ip: bind_ip],
     secret_key_base: secret_key_base
 

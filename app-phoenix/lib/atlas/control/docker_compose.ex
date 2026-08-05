@@ -13,6 +13,8 @@ defmodule Atlas.Control.DockerCompose do
 
   use GenServer
 
+  require Logger
+
   @type runner :: (String.t(), [String.t()] -> {Collectable.t(), exit_status :: non_neg_integer()})
   @type result :: {:ok, String.t()} | {:error, non_neg_integer(), String.t()}
 
@@ -78,16 +80,25 @@ defmodule Atlas.Control.DockerCompose do
     # `--project-directory` handling.
     project_dir = Keyword.get(opts, :project_dir, host_project_dir())
 
-    {:ok, %{runner: runner, project_dir: project_dir}}
+    # `--project-directory` is a HOST path, so compose looks for the project's
+    # .env somewhere this container cannot see and every service silently comes
+    # up on compose defaults instead of the operator's settings. compose.yml
+    # bind-mounts the project root at /work, so point --env-file there.
+    env_file = Keyword.get(opts, :env_file, default_env_file())
+
+    unless is_nil(env_file) or readable_file?(env_file) do
+      Logger.info(
+        "no readable #{env_file}; control-plane services will use compose defaults. " <>
+          "Settings from the project .env (region, UID/GID, heap) will not apply."
+      )
+    end
+
+    {:ok, %{runner: runner, project_dir: project_dir, env_file: env_file}}
   end
 
   @impl true
   def handle_call({:compose, args}, _from, %{runner: runner} = state) do
-    full_args =
-      case state.project_dir do
-        nil -> ["compose" | args]
-        dir -> ["compose", "--project-directory", dir | args]
-      end
+    full_args = ["compose"] ++ project_args(state) ++ env_file_args(state) ++ args
 
     reply =
       case runner.("docker", full_args) do
@@ -96,6 +107,42 @@ defmodule Atlas.Control.DockerCompose do
       end
 
     {:reply, reply, state}
+  end
+
+  @doc """
+  Container-local path to the project `.env`, i.e. the project root as this
+  container sees it (`.:/work:ro` in compose.yml) rather than the host path in
+  `--project-directory`. Override with `ATLAS_ENV_FILE`.
+  """
+  def default_env_file do
+    case System.get_env("ATLAS_ENV_FILE") do
+      nil -> "/work/.env"
+      "" -> "/work/.env"
+      path -> path
+    end
+  end
+
+  @doc """
+  `--env-file` arguments for the default project `.env`, or `[]` when there
+  isn't a readable one. Shared with `Atlas.Control.LogTailer` so every compose
+  subcommand interpolates the compose file the same way.
+  """
+  def default_env_file_args, do: env_file_args(%{env_file: default_env_file()})
+
+  defp project_args(%{project_dir: nil}), do: []
+  defp project_args(%{project_dir: dir}), do: ["--project-directory", dir]
+
+  # Only pass the flag when compose can actually read the file: it errors out on
+  # a missing --env-file, and .env is optional. Readability matters as much as
+  # existence — an unreadable file would turn a silent fallback into a hard stop.
+  defp env_file_args(%{env_file: file}) when is_binary(file) do
+    if readable_file?(file), do: ["--env-file", file], else: []
+  end
+
+  defp env_file_args(_state), do: []
+
+  defp readable_file?(path) do
+    File.regular?(path) and match?({:ok, _}, File.open(path, [:read], &(&1)))
   end
 
   defp host_project_dir do
