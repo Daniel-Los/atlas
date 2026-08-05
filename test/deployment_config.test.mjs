@@ -22,3 +22,10 @@ test('Overpass diff updates are opt-in by default', () => {
 
   assert.match(compose, /OVERPASS_DIFF_URL:\s+\$\{OVERPASS_DIFF_URL:-\}/);
 });
+
+test('Dokploy minimal compose does not enable Overpass by default', () => {
+  const compose = readFileSync(new URL('../compose.dokploy.yml', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(compose, /^\s{8}handle_path \/overpass\/\* \{/m);
+  assert.doesNotMatch(compose, /^\s{2}overpass:\s*$/m);
+});

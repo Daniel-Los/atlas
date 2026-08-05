@@ -61,14 +61,14 @@ configs:
           header @pmtiles Content-Type application/octet-stream
         }
 
-        # Overpass for the maptoposter sidecar. handle_path strips /overpass so
-        # OSMnx's /api/interpreter reaches the overpass root. Unique alias for
-        # the same dokploy-network collision reason noted below.
+        # Optional Overpass proxy for the maptoposter sidecar. Uncomment this
+        # together with the `overpass` service below. handle_path strips
+        # /overpass so OSMnx's /api/interpreter reaches the overpass root.
         # ⚠️ PUBLIC via Traefik — restrict to the sidecar's egress before use,
         # e.g. add `@ovp remote_ip A.B.C.D/32` then `reverse_proxy @ovp ...`.
-        handle_path /overpass/* {
-          reverse_proxy atlas-overpass:80
-        }
+        # handle_path /overpass/* {
+        #   reverse_proxy atlas-overpass:80
+        # }
 
         handle {
           reverse_proxy app:4000 {
@@ -175,28 +175,29 @@ services:
   #   restart: unless-stopped
   #   networks: [atlas]
   #
-  # Overpass for the maptoposter poster sidecar (uncommented = Cloud poster
-  # backend). ⚠️ PLANET sizing: the DB built from a planet PBF is large
-  # (hundreds of GB of disk; ingest is RAM-hungry) — provision the host first.
-  overpass:
-    image: wiktorn/overpass-api:v0.7.62.11
-    environment:
-      OVERPASS_META: ${OVERPASS_META:-no}
-      OVERPASS_MODE: init
-      # current.osm.bz2 must be the PLANET in OSM-XML+bz2, staged by the app's
-      # apply step. Posters tolerate stale data, so diff updates are OFF by
-      # default (static snapshot); re-import periodically instead.
-      OVERPASS_PLANET_URL: file:///osm/current.osm.bz2
-      OVERPASS_DIFF_URL: ${OVERPASS_DIFF_URL:-}
-      OVERPASS_RULES_LOAD: 10
-      OVERPASS_COMPRESSION: lz4
-    volumes:
-      - atlas_overpass:/db
-      - atlas_osm:/osm:ro
-    restart: unless-stopped
-    networks:
-      atlas:
-        aliases: [atlas-overpass]
+  # Overpass for the maptoposter poster sidecar (uncomment = Cloud poster
+  # backend, and uncomment the /overpass proxy above). ⚠️ PLANET sizing: the DB
+  # built from a planet PBF is large (hundreds of GB of disk; ingest is
+  # RAM-hungry) — provision the host first.
+  # overpass:
+  #   image: wiktorn/overpass-api:v0.7.62.11
+  #   environment:
+  #     OVERPASS_META: ${OVERPASS_META:-no}
+  #     OVERPASS_MODE: init
+  #     # current.osm.bz2 must be the PLANET in OSM-XML+bz2, staged by the app's
+  #     # apply step. Posters tolerate stale data, so diff updates are OFF by
+  #     # default (static snapshot); re-import periodically instead.
+  #     OVERPASS_PLANET_URL: file:///osm/current.osm.bz2
+  #     OVERPASS_DIFF_URL: ${OVERPASS_DIFF_URL:-}
+  #     OVERPASS_RULES_LOAD: 10
+  #     OVERPASS_COMPRESSION: lz4
+  #   volumes:
+  #     - atlas_overpass:/db
+  #     - atlas_osm:/osm:ro
+  #   restart: unless-stopped
+  #   networks:
+  #     atlas:
+  #       aliases: [atlas-overpass]
   #
   # otp:
   #   image: opentripplanner/opentripplanner:2.10.0_2026-05-18T08-51
