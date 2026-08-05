@@ -1,8 +1,8 @@
 defmodule AtlasWeb.Admin.TilesLive do
   use AtlasWeb, :live_view
 
-  alias Atlas.Settings
   alias Atlas.Control.TilesDownloader
+  alias Atlas.Settings
   alias AtlasWeb.Admin.TilesController
 
   @impl true

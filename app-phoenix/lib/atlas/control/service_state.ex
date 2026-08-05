@@ -24,7 +24,7 @@ defmodule Atlas.Control.ServiceState do
 
   use GenServer
 
-  alias Atlas.Control.{Registry, Service}
+  alias Atlas.Control.{DockerCompose, Registry, Service}
   alias Atlas.Repo
   alias Phoenix.PubSub
 
@@ -349,8 +349,8 @@ defmodule Atlas.Control.ServiceState do
 
   defp compose(action, name) do
     case action do
-      :start -> Atlas.Control.DockerCompose.start(name)
-      :stop -> Atlas.Control.DockerCompose.stop(name)
+      :start -> DockerCompose.start(name)
+      :stop -> DockerCompose.stop(name)
     end
   rescue
     e -> {:error, 0, "control plane unavailable: #{Exception.message(e)}"}
@@ -359,7 +359,7 @@ defmodule Atlas.Control.ServiceState do
   end
 
   defp probe_running(name) do
-    Atlas.Control.DockerCompose.running?(name)
+    DockerCompose.running?(name)
   rescue
     e -> {:error, 0, Exception.message(e)}
   catch

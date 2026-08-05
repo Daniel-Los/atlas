@@ -1,4 +1,8 @@
 defmodule AtlasWeb.ServiceCard do
+  @moduledoc """
+  Live component for one sidecar service — status, schedule and controls.
+  """
+
   use AtlasWeb, :live_component
 
   alias Atlas.Control.ServiceSchedule

@@ -14,7 +14,7 @@ defmodule Atlas.Control.Jobs.AutoUpdateScan do
 
   import Ecto.Query
 
-  alias Atlas.{Repo, Control.Service}
+  alias Atlas.{Control.Service, Repo}
   alias Crontab.CronExpression.Parser
   alias Crontab.DateChecker
 

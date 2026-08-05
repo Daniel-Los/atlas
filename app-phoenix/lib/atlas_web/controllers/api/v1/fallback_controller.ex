@@ -14,7 +14,7 @@ defmodule AtlasWeb.Api.V1.FallbackController do
   - `{:error, :too_many, max}` → 422 `VALIDATION_ERROR`
   """
   use AtlasWeb, :controller
-  alias Atlas.Maps.Upstream.Client.{Unavailable, BadResponse}
+  alias Atlas.Maps.Upstream.Client.{BadResponse, Unavailable}
   alias AtlasWeb.Api.V1.BaseController
 
   def call(conn, {:error, %Unavailable{message: m}}) do

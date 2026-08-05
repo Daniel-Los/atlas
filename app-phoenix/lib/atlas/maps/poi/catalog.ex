@@ -1,4 +1,12 @@
 defmodule Atlas.Maps.Poi.Catalog do
+  @moduledoc """
+  The POI category catalog, compiled in from `priv/poi_categories.exs`.
+
+  Categories and their SVG icons are read at compile time (and registered as
+  `@external_resource`, so editing the file triggers a rebuild). Maps
+  user-facing category ids to the OSM tag selectors the Overpass queries use.
+  """
+
   @path Path.expand("../../../../priv/poi_categories.exs", __DIR__)
   @external_resource @path
   @sections Code.eval_file(@path) |> elem(0)
