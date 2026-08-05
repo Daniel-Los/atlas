@@ -1,4 +1,8 @@
 defmodule AtlasWeb.DegradationBanner do
+  @moduledoc """
+  Banner shown when one or more upstream services are unavailable.
+  """
+
   use Phoenix.Component
 
   use Phoenix.VerifiedRoutes,

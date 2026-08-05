@@ -1,4 +1,12 @@
 defmodule Atlas.Control do
+  @moduledoc """
+  Boundary for the control plane.
+
+  Owns the self-hosted lifecycle: which region is selected, which sidecar
+  services are running, and the download/convert/apply pipeline that turns a
+  Geofabrik extract into data the map services can serve.
+  """
+
   use Boundary,
     deps: [
       Atlas.Repo,
