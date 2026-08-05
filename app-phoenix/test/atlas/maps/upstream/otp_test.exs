@@ -7,15 +7,42 @@ defmodule Atlas.Maps.Upstream.OtpTest do
     {:ok, bypass: bypass, req: Client.build("http://localhost:#{bypass.port}")}
   end
 
-  test "plan/2 hits /otp/routers/default/plan with required params", %{bypass: bypass, req: req} do
-    Bypass.expect_once(bypass, "GET", "/otp/routers/default/plan", fn conn ->
-      assert conn.query_string =~ "fromPlace=52.5%2C13.4"
-      assert conn.query_string =~ "toPlace=52.6%2C13.5"
-      assert conn.query_string =~ "mode=TRANSIT%2CWALK"
-      Plug.Conn.resp(conn, 200, ~s({"plan":{"itineraries":[]}}))
+  test "plan/2 posts a planConnection GraphQL request with required variables", %{
+    bypass: bypass,
+    req: req
+  } do
+    Bypass.expect_once(bypass, "POST", "/otp/gtfs/v1", fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      payload = Jason.decode!(body)
+
+      assert Plug.Conn.get_req_header(conn, "content-type") == ["application/json"]
+      assert payload["query"] =~ "planConnection"
+
+      assert payload["variables"]["origin"]["location"]["coordinate"] == %{
+               "latitude" => 52.5,
+               "longitude" => 13.4
+             }
+
+      assert payload["variables"]["destination"]["location"]["coordinate"] == %{
+               "latitude" => 52.6,
+               "longitude" => 13.5
+             }
+
+      assert payload["variables"]["dateTime"] == %{"earliestDeparture" => "2026-05-29T08:30:00Z"}
+      assert payload["variables"]["modes"]["direct"] == ["WALK"]
+      assert payload["variables"]["modes"]["transit"]["transit"] == [%{"mode" => "BUS"}]
+
+      Plug.Conn.resp(conn, 200, ~s({"data":{"planConnection":{"edges":[]}}}))
     end)
 
-    assert {:ok, %{"plan" => _}} = Otp.plan(req, from: %{lat: 52.5, lon: 13.4}, to: %{lat: 52.6, lon: 13.5})
+    assert {:ok, %{"plan" => %{"itineraries" => []}}} =
+             Otp.plan(req,
+               from: %{lat: 52.5, lon: 13.4},
+               to: %{lat: 52.6, lon: 13.5},
+               date: "2026-05-29",
+               time: "08:30:00",
+               modes: "BUS,WALK"
+             )
   end
 
   test "default/0 falls back to OTP port 8080 (not 8003)" do

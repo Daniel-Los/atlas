@@ -176,7 +176,7 @@ defmodule AtlasWeb.MapLiveTest do
     assert_push_event(view, "map:draw_route", %{geojson: geojson})
 
     assert %{type: "FeatureCollection", features: features} = geojson
-    assert length(features) >= 1
+    assert features != []
 
     Enum.each(features, fn feature ->
       assert %{type: "Feature", geometry: %{type: "LineString", coordinates: coords}} = feature

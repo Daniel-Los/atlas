@@ -17,8 +17,8 @@ defmodule Atlas.Control.SnapshotPersister do
 
   import Ecto.Query
 
-  alias Atlas.Repo
   alias Atlas.Control.{Seeder, Service, ServiceState}
+  alias Atlas.Repo
 
   @tick_ms 5_000
 

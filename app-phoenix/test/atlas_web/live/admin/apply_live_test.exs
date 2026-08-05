@@ -66,8 +66,8 @@ defmodule AtlasWeb.Admin.ApplyLiveTest do
     start_supervised!(
       {RegionApplier,
        downloader: downloader,
-       osmium_convert: fn _dir, _in, out ->
-         File.write!(Path.expand(out, tmp), "bz2")
+       osmium_convert: fn dir, _in, out ->
+         File.write!(Path.expand(out, dir), "bz2")
          {:ok, "ok"}
        end,
        restart: fn _names -> :ok end,
@@ -152,8 +152,8 @@ defmodule AtlasWeb.Admin.ApplyLiveTest do
     start_supervised!(
       {RegionApplier,
        downloader: downloader,
-       osmium_convert: fn _dir, _in, out ->
-         File.write!(Path.expand(out, tmp), "bz2")
+       osmium_convert: fn dir, _in, out ->
+         File.write!(Path.expand(out, dir), "bz2")
          {:ok, "ok"}
        end,
        restart: fn _names -> :ok end,

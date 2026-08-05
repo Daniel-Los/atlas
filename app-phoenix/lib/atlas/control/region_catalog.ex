@@ -299,12 +299,10 @@ defmodule Atlas.Control.RegionCatalog do
   end
 
   defp unquote_value(value) do
-    cond do
-      String.starts_with?(value, "\"") and String.ends_with?(value, "\"") ->
-        String.slice(value, 1..-2//1)
-
-      true ->
-        value
+    if String.starts_with?(value, "\"") and String.ends_with?(value, "\"") do
+      String.slice(value, 1..-2//1)
+    else
+      value
     end
   end
 

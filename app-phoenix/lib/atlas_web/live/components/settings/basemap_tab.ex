@@ -1,4 +1,8 @@
 defmodule AtlasWeb.Settings.BasemapTab do
+  @moduledoc """
+  Basemap tab of the settings drawer — preset selection and tile download state.
+  """
+
   use Phoenix.Component
 
   import AtlasWeb.IconHelpers
