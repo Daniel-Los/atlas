@@ -1,4 +1,8 @@
 defmodule AtlasWeb.Settings.ServicesTab do
+  @moduledoc """
+  Services tab of the settings drawer — per-service status, schedules and actions.
+  """
+
   use Phoenix.Component
 
   import AtlasWeb.IconHelpers

@@ -1,4 +1,11 @@
 defmodule Atlas.Maps.WhatsHere do
+  @moduledoc """
+  "What is at this coordinate?" — reverse geocode plus surrounding POIs.
+
+  Combines `Atlas.Maps.Reverse` with an Overpass `around` query. Both must
+  succeed; either failing surfaces the upstream error.
+  """
+
   alias Atlas.Maps.{Result, Reverse, Upstream.Overpass}
 
   @doc """

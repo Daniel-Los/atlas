@@ -212,7 +212,6 @@ defmodule AtlasWeb.MapLive do
     end
   end
 
-
   @impl true
   def handle_event("cancel_basemap_confirm", _params, socket) do
     {:noreply, assign(socket, basemap_confirm: nil)}

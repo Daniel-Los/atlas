@@ -1,4 +1,8 @@
 defmodule AtlasWeb.Settings.PendingSummary do
+  @moduledoc """
+  Summary of the not-yet-applied region change: what will be downloaded, converted and restarted.
+  """
+
   use Phoenix.Component
 
   alias Atlas.Control.{ApplyProjection, RegionCatalog}

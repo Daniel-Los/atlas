@@ -26,19 +26,11 @@ defmodule Atlas.Control.Parsers.Valhalla do
 
     new_acc =
       cond do
-        Regex.match?(@tiles_ready_re, line) or Regex.match?(@serve_re, line) ->
+        serving?(line) ->
           %{acc | phase: "ready", ready: true, progress: 1.0}
 
         match = Regex.run(@progress_re, line) ->
-          [_, _of, _total, pct_str] = match
-
-          progress =
-            case Integer.parse(pct_str) do
-              {pct, _} -> pct / 100.0
-              :error -> acc.progress
-            end
-
-          %{acc | phase: "building-tiles", progress: progress}
+          %{acc | phase: "building-tiles", progress: tile_progress(match, acc.progress)}
 
         Regex.match?(@tiles_re, line) ->
           %{acc | phase: "building-tiles", progress: max_progress(acc.progress, 0.5)}
@@ -57,6 +49,15 @@ defmodule Atlas.Control.Parsers.Valhalla do
       end
 
     {new_acc, new_acc}
+  end
+
+  defp serving?(line), do: Regex.match?(@tiles_ready_re, line) or Regex.match?(@serve_re, line)
+
+  defp tile_progress([_, _of, _total, pct_str], fallback) do
+    case Integer.parse(pct_str) do
+      {pct, _} -> pct / 100.0
+      :error -> fallback
+    end
   end
 
   defp max_progress(nil, floor), do: floor

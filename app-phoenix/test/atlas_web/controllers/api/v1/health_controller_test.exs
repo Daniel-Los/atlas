@@ -1,7 +1,7 @@
 defmodule AtlasWeb.Api.V1.HealthControllerTest do
   use AtlasWeb.ConnCase, async: true
-  alias Atlas.Repo
   alias Atlas.Control.Service
+  alias Atlas.Repo
 
   test "GET /api/v1/health returns per-capability statuses in the data envelope", %{conn: conn} do
     for {name, status} <- [
