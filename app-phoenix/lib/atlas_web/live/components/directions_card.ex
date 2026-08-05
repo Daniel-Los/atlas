@@ -1,4 +1,8 @@
 defmodule AtlasWeb.DirectionsCard do
+  @moduledoc """
+  The directions panel — mode switcher, endpoints, and the resulting itinerary.
+  """
+
   use Phoenix.Component
 
   import AtlasWeb.IconHelpers

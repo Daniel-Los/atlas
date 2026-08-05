@@ -65,6 +65,7 @@ defmodule Mix.Tasks.Atlas.MigrateFromRailsPostgres do
     # `Application.compile_env`, so we call it through `apply/3` to keep this
     # check truly runtime — otherwise the compiler flags the comparison as
     # always-false in a SQLite build.
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
     apply(Atlas.Repo, :__adapter__, []) == Ecto.Adapters.Postgres
   end
 

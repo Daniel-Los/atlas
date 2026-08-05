@@ -3,7 +3,7 @@ defmodule Atlas.Maps.Transit do
   Transit orchestrator. Calls OTP and serializes the camelCase response into
   snake_case `plan`/`leg` shapes matching Rails `TransitsController#serialize_plan`.
   """
-  alias Atlas.Maps.{Result, Upstream.Otp, Upstream.Client}
+  alias Atlas.Maps.{Result, Upstream.Client, Upstream.Otp}
   require Logger
 
   def plan(opts) do

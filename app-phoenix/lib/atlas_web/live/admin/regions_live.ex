@@ -3,8 +3,8 @@ defmodule AtlasWeb.Admin.RegionsLive do
 
   import Ecto.Query
 
-  alias Atlas.Repo
   alias Atlas.Control.{RegionCatalog, RegionSelection}
+  alias Atlas.Repo
   alias AtlasWeb.Admin.RegionsController
 
   @impl true

@@ -1,4 +1,10 @@
 defmodule Atlas.Maps.Upstream.Otp do
+  @moduledoc """
+  OpenTripPlanner client for multi-modal transit itineraries.
+
+  Defaults to the `TRANSIT,WALK` mode set.
+  """
+
   alias Atlas.Maps.Upstream.Client
 
   @default_modes "TRANSIT,WALK"

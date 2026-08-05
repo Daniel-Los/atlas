@@ -1,4 +1,11 @@
 defmodule Atlas.Maps.Upstream.Overpass do
+  @moduledoc """
+  Overpass API client.
+
+  Builds Overpass QL for the two shapes the app needs — `around/2` (radius) and
+  `bbox/2` (bounding box) — from a list of OSM tag selectors.
+  """
+
   alias Atlas.Maps.Upstream.Client
 
   def default do
@@ -31,12 +38,10 @@ defmodule Atlas.Maps.Upstream.Overpass do
           ~s|node(#{bbox_clause});way(#{bbox_clause});relation(#{bbox_clause});|
 
         filters ->
-          filters
-          |> Enum.map(fn sel ->
+          Enum.map_join(filters, "", fn sel ->
             [k, v] = String.split(sel, "=", parts: 2)
             ~s|node["#{k}"="#{v}"](#{bbox_clause});way["#{k}"="#{v}"](#{bbox_clause});|
           end)
-          |> Enum.join("")
       end
 
     ~s|[out:json][timeout:#{timeout}];(#{statements});out body center #{limit};|
@@ -55,12 +60,10 @@ defmodule Atlas.Maps.Upstream.Overpass do
           ~s|node(#{around_clause});way(#{around_clause});relation(#{around_clause});|
 
         tags ->
-          tags
-          |> Enum.map(fn tag ->
+          Enum.map_join(tags, "", fn tag ->
             [k, v] = String.split(tag, ":", parts: 2)
             ~s|node["#{k}"="#{v}"](#{around_clause});way["#{k}"="#{v}"](#{around_clause});|
           end)
-          |> Enum.join("")
       end
 
     ~s|[out:json][timeout:#{timeout}];(#{statements});out body center;|

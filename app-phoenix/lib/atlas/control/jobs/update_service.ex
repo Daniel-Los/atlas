@@ -15,7 +15,7 @@ defmodule Atlas.Control.Jobs.UpdateService do
     queue: :control,
     unique: [period: :infinity, states: [:available, :scheduled, :executing], fields: [:args]]
 
-  alias Atlas.{Repo, Control.Service, Control.DockerCompose}
+  alias Atlas.{Control.DockerCompose, Control.Service, Repo}
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"name" => name}}) do

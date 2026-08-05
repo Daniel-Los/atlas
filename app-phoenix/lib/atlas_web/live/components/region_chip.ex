@@ -1,4 +1,8 @@
 defmodule AtlasWeb.RegionChip do
+  @moduledoc """
+  Chips for picking a region and for showing the currently selected one.
+  """
+
   use Phoenix.Component
 
   attr :id, :string, required: true
