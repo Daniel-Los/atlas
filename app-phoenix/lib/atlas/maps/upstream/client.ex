@@ -8,12 +8,22 @@ defmodule Atlas.Maps.Upstream.Client do
   `Unavailable` (could not connect) and `BadResponse` (connected, bad status).
   """
 
+  require Logger
+
   defmodule Unavailable do
     defexception [:message, :upstream]
   end
 
   defmodule BadResponse do
-    defexception [:message, :upstream, :status]
+    @moduledoc """
+    An upstream answered, but with a non-2xx status.
+
+    `:body` carries the decoded response so callers can surface the upstream's
+    own explanation. Valhalla, for one, returns a specific `error_code` and
+    message on 400; without the body the caller can only invent a reason.
+    """
+
+    defexception [:message, :upstream, :status, :body]
   end
 
   def build(base_url, opts \\ []) do
@@ -49,7 +59,23 @@ defmodule Atlas.Maps.Upstream.Client do
   def env_int(key, default) do
     case System.get_env(key) do
       nil -> default
-      val -> String.to_integer(val)
+      "" -> default
+      val -> parse_int(key, val, default)
+    end
+  end
+
+  # Falls back rather than raising: compose renders `${VAR:-}` as an empty
+  # string for every declared-but-unset knob, and a typo in one of them used to
+  # take down every request that read it — a 500 on the whole API because a
+  # timeout was spelled "10s".
+  defp parse_int(key, val, default) do
+    case Integer.parse(val) do
+      {int, ""} ->
+        int
+
+      _ ->
+        Logger.warning("#{key}=#{inspect(val)} is not an integer, using #{default}")
+        default
     end
   end
 
@@ -63,8 +89,13 @@ defmodule Atlas.Maps.Upstream.Client do
       {:ok, %{status: s, body: body}} when s in 200..299 ->
         {:ok, maybe_decode(body)}
 
-      {:ok, %{status: s}} ->
-        {:error, %BadResponse{message: "#{s} from #{req.options[:base_url]}#{path}", status: s}}
+      {:ok, %{status: s, body: response_body}} ->
+        {:error,
+         %BadResponse{
+           message: "#{s} from #{req.options[:base_url]}#{path}",
+           status: s,
+           body: maybe_decode(response_body)
+         }}
 
       {:error, exception} ->
         {:error, %Unavailable{message: Exception.message(exception)}}
@@ -76,8 +107,13 @@ defmodule Atlas.Maps.Upstream.Client do
       {:ok, %{status: s, body: response_body}} when s in 200..299 ->
         {:ok, maybe_decode(response_body)}
 
-      {:ok, %{status: s}} ->
-        {:error, %BadResponse{message: "#{s} from #{req.options[:base_url]}#{path}", status: s}}
+      {:ok, %{status: s, body: response_body}} ->
+        {:error,
+         %BadResponse{
+           message: "#{s} from #{req.options[:base_url]}#{path}",
+           status: s,
+           body: maybe_decode(response_body)
+         }}
 
       {:error, exception} ->
         {:error, %Unavailable{message: Exception.message(exception)}}
@@ -89,8 +125,13 @@ defmodule Atlas.Maps.Upstream.Client do
       {:ok, %{status: s, body: response_body}} when s in 200..299 ->
         {:ok, maybe_decode(response_body)}
 
-      {:ok, %{status: s}} ->
-        {:error, %BadResponse{message: "#{s} from #{req.options[:base_url]}#{path}", status: s}}
+      {:ok, %{status: s, body: response_body}} ->
+        {:error,
+         %BadResponse{
+           message: "#{s} from #{req.options[:base_url]}#{path}",
+           status: s,
+           body: maybe_decode(response_body)
+         }}
 
       {:error, exception} ->
         {:error, %Unavailable{message: Exception.message(exception)}}

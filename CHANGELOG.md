@@ -7,6 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Fixed
+- Map matching reports Valhalla's own reason for rejecting a trace instead of always claiming it was unmatchable — a trace longer than Valhalla's 200 km `max_distance`, or over `max_shape`, previously came back as "outside the loaded region, or too sparse or too noisy". Upstream error bodies are now preserved on every non-2xx response, and the `error_code` is returned in the error details.
+- Map matching answers 422 instead of 500 when a coordinate is a non-numeric JSON value (`true`, an object, an array), and rejects locale-style decimals like `"52,5"` rather than silently truncating them to `52.0` — a ~55 km relocation.
+- `MAP_MATCH_MAX_POINTS` and `VALHALLA_MATCH_TIMEOUT` set in `.env` now reach the app; the compose files pass an explicit environment allowlist, so they were silently dropped. A malformed value in any `*_TIMEOUT`-style knob falls back to the default with a warning instead of raising on every request that reads it.
 - The Protomaps daily-planet basemap targets the previous day’s build, which is already published, instead of a build that may not exist yet (#2)
 - Transit planning now uses OpenTripPlanner's GraphQL API instead of the removed legacy REST endpoint (#25).
 - Region apply no longer stalls or silently serves stale POI data: the PBF→bz2 convert is no longer bounded by a 30-minute wall-clock timeout (a genuinely hung osmium is now caught by a stall watchdog instead), orphaned `.partial` files are swept from `osm/`, `osm/sources/` and `gtfs/`, and a failed conversion fails the apply loudly instead of leaving overpass on a weeks-old snapshot (#34, #28). The convert now runs after OTP staging, so a broken overpass source no longer withholds fresh data from valhalla and OTP.

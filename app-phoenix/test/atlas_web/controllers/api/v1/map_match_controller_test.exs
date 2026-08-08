@@ -180,6 +180,48 @@ defmodule AtlasWeb.Api.V1.MapMatchControllerTest do
       assert resp["error"]["details"]["max"] == 2
     end
 
+    test "422 rather than 500 for a non-numeric JSON scalar", %{conn: conn} do
+      # `true` and `%{}` are valid JSON but not coordinates. These reached
+      # parse_float/1, which has clauses only for nil/binary/number, so the
+      # request died with FunctionClauseError and the client saw a 500 — an
+      # Atlas bug report for what is plainly bad input.
+      for bad <- [true, false, %{"a" => 1}, [52.5]] do
+        resp =
+          conn
+          |> submit(%{shape: [%{lat: 52.5, lon: 13.4}, %{lat: bad, lon: 13.41}]})
+          |> json_response(422)
+
+        assert resp["error"]["code"] == "VALIDATION_ERROR"
+        assert resp["error"]["details"]["index"] == 1
+      end
+    end
+
+    test "422 rather than silently truncating a comma decimal", %{conn: conn} do
+      # Float.parse("52,5") returns {52.0, ",5"} — accepting it moved the point
+      # half a degree (~55 km) with no error anywhere. A locale-confused client
+      # must be told, not quietly relocated.
+      resp =
+        conn
+        |> submit(%{shape: [%{lat: "52,5", lon: "13,4"}, %{lat: 52.51, lon: 13.41}]})
+        |> json_response(422)
+
+      assert resp["error"]["details"]["index"] == 0
+    end
+
+    test "still accepts numeric strings and integers", %{conn: conn, bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/trace_route", fn c ->
+        {:ok, body, c} = Plug.Conn.read_body(c)
+        assert [%{"lat" => 52.5, "lon" => 13.4}, %{"lat" => 53.0, "lon" => 14.0}] =
+                 Jason.decode!(body)["shape"]
+
+        Plug.Conn.resp(c, 200, ~s({"trip":{"legs":[]}}))
+      end)
+
+      assert conn
+             |> submit(%{shape: [%{lat: "52.5", lon: "13.4"}, %{lat: 53, lon: 14}]})
+             |> json_response(200)
+    end
+
     test "an unparseable point is rejected before Valhalla is called", %{
       conn: conn,
       bypass: bypass
@@ -204,7 +246,8 @@ defmodule AtlasWeb.Api.V1.MapMatchControllerTest do
       resp = conn |> submit(%{shape: @shape}) |> json_response(422)
 
       assert resp["error"]["code"] == "VALIDATION_ERROR"
-      assert resp["error"]["message"] =~ "could not be matched"
+      assert resp["error"]["message"] =~ "No suitable edges near location"
+      assert resp["error"]["details"]["upstream_error_code"] == 171
     end
 
     test "502 when Valhalla errors", %{conn: conn, bypass: bypass} do
