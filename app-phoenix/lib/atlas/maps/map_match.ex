@@ -24,6 +24,10 @@ defmodule Atlas.Maps.MapMatch do
   @max_points 10_000
   @polyline_precision 6
 
+  # Only used when Valhalla's own explanation is missing or unreadable.
+  @generic_rejection "the trace could not be matched to the road network — it may lie " <>
+                       "outside the loaded region, or the points may be too sparse or too noisy"
+
   @doc """
   Upper bound on trace length, overridable with `MAP_MATCH_MAX_POINTS`.
 
@@ -79,16 +83,17 @@ defmodule Atlas.Maps.MapMatch do
     |> handle_response()
   end
 
-  # Valhalla answers 400 when no road network candidate fits the trace
-  # (error_code 171, "No suitable edges near location"). That is unmatchable
-  # input, not a sick upstream — surfacing it as 502 sends the operator
-  # debugging a service that is behaving correctly.
+  # Every Valhalla 400 is the caller's input being unusable, so 422 is right
+  # across the board — 502 would send the operator debugging a service that is
+  # behaving correctly. But the REASON varies: unmatchable geometry
+  # (error_code 171), a trace longer than `max_distance` (200 km by default —
+  # one day of driving), more points than `max_shape`, an out-of-range trace
+  # option. Relay Valhalla's own message instead of asserting one of them.
   defp handle_response({:ok, body}), do: {:ok, body}
 
-  defp handle_response({:error, %Client.BadResponse{status: 400}}) do
-    {:error, :invalid,
-     "the trace could not be matched to the road network — it may lie outside " <>
-       "the loaded region, or the points may be too sparse or too noisy", %{param: "shape"}}
+  defp handle_response({:error, %Client.BadResponse{status: 400, body: body}}) do
+    Logger.warning("valhalla rejected the trace: #{inspect(body)}")
+    {:error, :invalid, upstream_message(body), upstream_details(body)}
   end
 
   defp handle_response({:error, %Client.Unavailable{} = error}) do
@@ -100,6 +105,14 @@ defmodule Atlas.Maps.MapMatch do
     Logger.warning("valhalla bad response: #{Exception.message(error)}")
     {:error, error}
   end
+
+  defp upstream_message(%{"error" => error}) when is_binary(error) and error != "", do: error
+  defp upstream_message(_body), do: @generic_rejection
+
+  defp upstream_details(%{"error_code" => code}) when is_integer(code),
+    do: %{param: "shape", upstream_error_code: code}
+
+  defp upstream_details(_body), do: %{param: "shape"}
 
   defp build_result(body, "geojson") do
     trip = body["trip"] || %{}

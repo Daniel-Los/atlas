@@ -109,8 +109,8 @@ defmodule AtlasWeb.Api.V1.MapMatchController do
   end
 
   defp parse_point(%{"lat" => lat, "lon" => lon} = raw) do
-    case {parse_float(lat), parse_float(lon)} do
-      {lat_f, lon_f} when is_number(lat_f) and is_number(lon_f) ->
+    case {coordinate(lat), coordinate(lon)} do
+      {lat_f, lon_f} when is_float(lat_f) and is_float(lon_f) ->
         {:ok,
          %{
            lat: lat_f,
@@ -125,6 +125,22 @@ defmodule AtlasWeb.Api.V1.MapMatchController do
   end
 
   defp parse_point(_raw), do: :error
+
+  # Not `BaseController.parse_float/1`: it has no catch-all clause, so a JSON
+  # `true` or `{}` raised FunctionClauseError and the client got a 500 for what
+  # is plainly bad input. It is also lenient — `Float.parse("52,5")` yields
+  # 52.0 and the point silently moves ~55 km — so trailing characters are
+  # rejected here rather than dropped.
+  defp coordinate(value) when is_number(value), do: value * 1.0
+
+  defp coordinate(value) when is_binary(value) do
+    case Float.parse(value) do
+      {float, ""} -> float
+      _ -> nil
+    end
+  end
+
+  defp coordinate(_value), do: nil
 
   defp trace_options(params) do
     Map.new(@trace_option_params, fn key ->

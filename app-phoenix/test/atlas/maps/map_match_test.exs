@@ -108,8 +108,38 @@ defmodule Atlas.Maps.MapMatchTest do
 
       assert {:error, :invalid, message, details} = MapMatch.match(shape: @shape, mode: "auto")
 
+      assert message =~ "No suitable edges near location"
+      assert details.param == "shape"
+      assert details.upstream_error_code == 171
+    end
+
+    test "a 400 for a reason other than unmatchability says so", %{bypass: bypass} do
+      # 400 is not only "cannot be snapped". Valhalla's trace limits default to
+      # max_distance 200 km — one day of driving — and exceeding that, or
+      # max_shape, or an out-of-range trace option, all return 400 too.
+      # Reporting every one of them as "outside the loaded region, or too
+      # sparse or too noisy" sends the operator to fix the wrong thing.
+      respond(
+        bypass,
+        400,
+        ~s({"error_code":154,"error":"Path distance exceeds the max distance limit"})
+      )
+
+      assert {:error, :invalid, message, details} = MapMatch.match(shape: @shape, mode: "auto")
+
+      assert message =~ "max distance limit"
+      refute message =~ "too sparse"
+      assert details.upstream_error_code == 154
+    end
+
+    test "a 400 with an unreadable body falls back to a generic explanation", %{bypass: bypass} do
+      respond(bypass, 400, "<html>gateway ate it</html>")
+
+      assert {:error, :invalid, message, details} = MapMatch.match(shape: @shape, mode: "auto")
+
       assert message =~ "could not be matched"
       assert details.param == "shape"
+      refute Map.has_key?(details, :upstream_error_code)
     end
 
     test "a 500 stays a BadResponse", %{bypass: bypass} do
