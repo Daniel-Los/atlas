@@ -7,6 +7,7 @@ defmodule AtlasWeb.Settings.RegionTab do
 
   import AtlasWeb.IconHelpers
 
+  alias Atlas.Control.ApplyTimeline
   alias Atlas.Control.RegionCatalog
 
   attr :regions, :list, required: true
@@ -16,7 +17,7 @@ defmodule AtlasWeb.Settings.RegionTab do
   attr :region_query, :string, required: true
   attr :expanded, :any, required: true
   attr :quick_picks, :list, required: true
-  attr :apply_status, :any, default: nil
+  attr :timeline, :any, default: nil
   attr :myself, :any, required: true
 
   def region_tab(assigns) do
@@ -33,7 +34,7 @@ defmodule AtlasWeb.Settings.RegionTab do
 
     ~H"""
     <div>
-      <.apply_card :if={@apply_status} status={@apply_status} />
+      <.apply_card timeline={@timeline} />
 
       <.selected_tray selection={@selection} by_name={@by_name} />
 
@@ -97,66 +98,67 @@ defmodule AtlasWeb.Settings.RegionTab do
     """
   end
 
-  attr :status, :map, required: true
+  attr :timeline, :any, default: nil
 
   defp apply_card(assigns) do
-    error = Map.get(assigns.status, :error)
-
-    assigns =
-      assigns
-      |> assign(:error, error)
-      |> assign(:phase, Map.get(assigns.status, :phase))
-      |> assign(:region, Map.get(assigns.status, :region))
-      |> assign(:progress, Map.get(assigns.status, :progress))
-      |> assign(:regions, Map.get(assigns.status, :regions, []))
-
     ~H"""
-    <div
-      class={[
-        "mb-4 rounded-2xl px-3.5 py-3",
-        @error && "bg-error/10",
-        !@error && "bg-warning/10"
-      ]}
-      data-role="apply-card"
-    >
-      <div :if={!@error}>
-        <div class="flex items-center gap-2 font-mono text-[12px] font-semibold text-warning">
-          <span class="loading loading-spinner loading-xs"></span>
-          Applying {Enum.join(@regions, ", ")}
-        </div>
-        <div class="mt-1.5 font-mono text-[11.5px] capitalize text-base-content/70">
-          {phase_text(@phase)}<%= if @region do %> · {@region}<% end %>
-          <%= if is_number(@progress) do %>
-            · {round(@progress * 100)}%
-          <% end %>
-        </div>
-        <progress
-          :if={is_number(@progress)}
-          class="progress progress-warning mt-2 w-full"
-          value={round(@progress * 100)}
-          max="100"
-        >
-        </progress>
+    <div :if={@timeline} data-role="apply-timeline">
+      <div class="flex items-center gap-2 font-mono text-[12px] font-semibold">
+        <span :if={@timeline.status == :running} class="loading loading-spinner loading-xs"></span>
+        {Enum.join(@timeline.regions, ", ")}
+        <span class="text-base-content/55">
+          · step {@timeline.current_step} of {length(@timeline.stages)}
+        </span>
       </div>
 
-      <div :if={@error}>
-        <div class="font-mono text-[12px] font-semibold text-error">
-          Region apply failed ({phase_text(@phase)})
-        </div>
-        <div class="mt-1.5 break-words font-mono text-[11.5px] text-base-content/70">
-          {@error}
-        </div>
-      </div>
+      <ol class="mt-2 space-y-1.5">
+        <li :for={stage <- @timeline.stages} class="font-mono text-[11.5px]">
+          <div class="flex items-baseline gap-2">
+            <span class="w-3 text-base-content/55">{state_glyph(stage.state)}</span>
+            <span class={stage_class(stage.state)}>{stage.label}</span>
+            <span :if={stage.detail} class="text-base-content/55">{stage.detail}</span>
+            <span :if={ApplyTimeline.percentage(stage.measure)} class="text-base-content/70">
+              {ApplyTimeline.percentage(stage.measure)}%
+            </span>
+            <span :if={stage.error} class="text-error">{stage.error}</span>
+          </div>
+
+          <ul :if={stage.items != []} class="ml-5 mt-1 space-y-0.5">
+            <li :for={item <- stage.items} class="text-base-content/70">
+              <span class="w-3 text-base-content/55">{state_glyph(item.state)}</span>
+              {item.label}
+              <span :if={ApplyTimeline.percentage(item.measure)}>
+                · {ApplyTimeline.percentage(item.measure)}%
+              </span>
+              <span :if={is_nil(ApplyTimeline.percentage(item.measure)) and item.measure}>
+                · {bytes(item.measure.current)}
+              </span>
+              <div :if={item.source} class="ml-5 break-all text-[10.5px] text-base-content/45">
+                {item.source}
+              </div>
+            </li>
+          </ul>
+        </li>
+      </ol>
     </div>
     """
   end
 
-  defp phase_text(:downloading), do: "downloading"
-  defp phase_text(:merging), do: "merging"
-  defp phase_text(:converting), do: "converting for overpass"
-  defp phase_text(:staging), do: "staging transit inputs"
-  defp phase_text(:restarting), do: "restarting services"
-  defp phase_text(_), do: "working"
+  defp state_glyph(:done), do: "✓"
+  defp state_glyph(:running), do: "▸"
+  defp state_glyph(:error), do: "✗"
+  defp state_glyph(:skipped), do: "⊘"
+  defp state_glyph(_state), do: "○"
+
+  defp stage_class(:running), do: "font-semibold"
+  defp stage_class(:error), do: "text-error"
+  defp stage_class(:skipped), do: "text-base-content/40"
+  defp stage_class(_state), do: ""
+
+  defp bytes(n) when n >= 1_073_741_824, do: "#{Float.round(n / 1_073_741_824, 1)} GB"
+  defp bytes(n) when n >= 1_048_576, do: "#{Float.round(n / 1_048_576, 1)} MB"
+  defp bytes(n) when n >= 1024, do: "#{Float.round(n / 1024, 1)} KB"
+  defp bytes(n), do: "#{n} B"
 
   attr :selection, :any, required: true
   attr :by_name, :map, required: true

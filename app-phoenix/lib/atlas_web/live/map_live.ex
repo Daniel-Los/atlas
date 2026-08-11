@@ -6,6 +6,7 @@ defmodule AtlasWeb.MapLive do
   alias Atlas.Settings
 
   alias Atlas.Control.{
+    ApplyTimeline,
     RegionApplier,
     RegionSelection,
     Safe,
@@ -21,6 +22,7 @@ defmodule AtlasWeb.MapLive do
       Phoenix.PubSub.subscribe(Atlas.PubSub, "control:status")
       Safe.call(fn -> Phoenix.PubSub.subscribe(Atlas.PubSub, RegionApplier.topic()) end)
       Safe.call(fn -> Phoenix.PubSub.subscribe(Atlas.PubSub, TilesDownloader.topic()) end)
+      Safe.call(fn -> Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic()) end)
     end
 
     {:ok,
@@ -46,6 +48,7 @@ defmodule AtlasWeb.MapLive do
        tiles_download: Safe.call(fn -> TilesDownloader.status() end, nil),
        basemap_confirm: nil,
        apply_status: Safe.call(fn -> RegionApplier.status() end, nil),
+       timeline: Safe.call(fn -> ApplyTimeline.current() end, nil),
        service_logs: nil,
        upstream_status: "ok"
      )}
@@ -504,6 +507,10 @@ defmodule AtlasWeb.MapLive do
      |> put_flash(:error, "Tile pack download failed: #{reason}")}
   end
 
+  def handle_info({:timeline, timeline}, socket) do
+    {:noreply, assign(socket, :timeline, timeline)}
+  end
+
   def handle_info(_other, socket), do: {:noreply, socket}
 
   defp refresh_service_status do
@@ -565,7 +572,7 @@ defmodule AtlasWeb.MapLive do
         pending_services={@pending_services}
         tiles_download={@tiles_download}
         basemap_confirm={@basemap_confirm}
-        apply_status={@apply_status}
+        timeline={@timeline}
       />
 
       <div class="relative flex-1 min-w-0 rounded-2xl border border-base-300 bg-base-100 overflow-hidden">

@@ -225,8 +225,11 @@ defmodule AtlasWeb.MapLiveTest do
     end
   end
 
-  describe "apply progress" do
-    test "apply lifecycle broadcasts render the progress card, then the error", %{conn: conn} do
+  # The settings panel's inline progress card now renders `Atlas.Control.ApplyTimeline`
+  # broadcasts (see AtlasWeb.SettingsPanelTest), not this `apply_status` bookkeeping.
+  # `apply_status` still drives the flash banners exercised below.
+  describe "apply status flashes" do
+    test "apply_error surfaces a flash with the phase and reason", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       job_id = Ecto.UUID.generate()
@@ -239,11 +242,6 @@ defmodule AtlasWeb.MapLiveTest do
          %{job_id: job_id, phase: :downloading, region: "berlin", progress: 0.4}}
       )
 
-      html = render(view)
-      assert html =~ "apply-card"
-      assert html =~ "Applying berlin"
-      assert html =~ "40%"
-
       send(
         view.pid,
         {:apply_error, %{job_id: job_id, phase: :downloading, reason: "HTTP 503"}}
@@ -254,15 +252,14 @@ defmodule AtlasWeb.MapLiveTest do
       assert html =~ "HTTP 503"
     end
 
-    test "apply_done clears the progress card", %{conn: conn} do
+    test "apply_done surfaces a flash naming the applied regions", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
       job_id = Ecto.UUID.generate()
       send(view.pid, {:apply_start, %{job_id: job_id, regions: ["berlin"]}})
-      assert render(view) =~ "apply-card"
 
       send(view.pid, {:apply_done, %{job_id: job_id, regions: ["berlin"]}})
-      refute render(view) =~ "apply-card"
+      assert render(view) =~ "Regions applied: berlin"
     end
   end
 end

@@ -23,7 +23,7 @@ defmodule AtlasWeb.SidePanel do
   attr :service_status, :map, required: true
   attr :pending_services, :map, default: %{}
   attr :tiles_download, :any, default: nil
-  attr :apply_status, :any, default: nil
+  attr :timeline, :any, default: nil
   attr :basemap_confirm, :any, default: nil
 
   def side_panel(assigns) do
@@ -84,7 +84,7 @@ defmodule AtlasWeb.SidePanel do
               service_status={@service_status}
               pending_services={@pending_services}
               tiles_download={@tiles_download}
-              apply_status={@apply_status}
+              timeline={@timeline}
               basemap_confirm={@basemap_confirm}
             />
           </div>
