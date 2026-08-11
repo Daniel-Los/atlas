@@ -84,6 +84,12 @@ defmodule Atlas.Control.ApplyTimeline do
     converting: :convert
   }
 
+  # Sidecars a region apply can restart (mirrors RegionApplier's
+  # `@ingest_services`). Gates `String.to_existing_atom/1` below on a known
+  # list instead of a `rescue`, so an unfamiliar service name is ignored
+  # without ever risking atom creation from external input.
+  @known_service_names ~w(valhalla overpass otp)
+
   @doc """
   Build the initial timeline. `services` are the sidecars this job will
   restart; only those get a row (see the attribution rule in the spec).
@@ -155,7 +161,49 @@ defmodule Atlas.Control.ApplyTimeline do
     |> Map.put(:finished_at, now)
   end
 
+  def apply_event(timeline, {:service_update, %{name: name} = snapshot}, now) do
+    if name in @known_service_names do
+      key = String.to_existing_atom(name)
+      adopt_service(timeline, key, snapshot, now)
+    else
+      timeline
+    end
+  end
+
   def apply_event(timeline, _event, _now), do: timeline
+
+  defp adopt_service(timeline, key, snapshot, now) do
+    if Enum.any?(timeline.stages, &(&1.key == key)) do
+      timeline
+      |> put_stage(key, &fold_service(&1, snapshot, now))
+      |> recompute_step()
+    else
+      timeline
+    end
+  end
+
+  defp fold_service(stage, %{status: :error} = snapshot, now) do
+    %{stage | state: :error, error: to_message(snapshot[:last_error]), finished_at: now}
+  end
+
+  defp fold_service(stage, %{ready?: true}, now) do
+    %{stage | state: :done, detail: "ready", finished_at: now, measure: nil}
+  end
+
+  defp fold_service(stage, snapshot, now) do
+    %{
+      stage
+      | state: :running,
+        started_at: stage.started_at || now,
+        detail: snapshot[:phase],
+        measure: service_measure(snapshot[:progress])
+    }
+  end
+
+  defp service_measure(progress) when is_number(progress),
+    do: %Measure{kind: :fraction, current: progress, total: 1}
+
+  defp service_measure(_progress), do: nil
 
   defp stage({key, label}), do: %Stage{key: key, label: label}
 

@@ -144,4 +144,66 @@ defmodule Atlas.Control.ApplyTimelineTest do
     assert stage(timeline, :stage_otp).state == :skipped
     assert stage(timeline, :convert).state == :skipped
   end
+
+  defp snapshot(name, fields) do
+    Map.merge(
+      %{name: name, status: :running, phase: nil, progress: nil, ready?: false, last_error: nil},
+      fields
+    )
+  end
+
+  test "an adopted service reports its ingest phase and real percentage" do
+    timeline =
+      start_timeline(["valhalla"])
+      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :restarting}}, @now)
+      |> ApplyTimeline.apply_event(
+        {:service_update, snapshot("valhalla", %{phase: "building-tiles", progress: 0.34})},
+        @now
+      )
+
+    valhalla = stage(timeline, :valhalla)
+
+    assert valhalla.state == :running
+    assert valhalla.detail == "building-tiles"
+    assert ApplyTimeline.percentage(valhalla.measure) == 34
+  end
+
+  test "a service reporting ready completes its stage" do
+    timeline =
+      start_timeline(["overpass"])
+      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :restarting}}, @now)
+      |> ApplyTimeline.apply_event(
+        {:service_update, snapshot("overpass", %{phase: "ready", ready?: true})},
+        @now
+      )
+
+    assert stage(timeline, :overpass).state == :done
+  end
+
+  test "a service this job never restarted is not adopted" do
+    timeline =
+      start_timeline(["valhalla"])
+      |> ApplyTimeline.apply_event(
+        {:service_update, snapshot("overpass", %{phase: "ingesting"})},
+        @now
+      )
+
+    assert stage(timeline, :overpass) == nil
+
+    assert Enum.map(timeline.stages, & &1.key) ==
+             [:download, :merge, :stage_otp, :convert, :valhalla]
+  end
+
+  test "a failing service errors its stage" do
+    timeline =
+      start_timeline(["otp"])
+      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :restarting}}, @now)
+      |> ApplyTimeline.apply_event(
+        {:service_update, snapshot("otp", %{status: :error, last_error: "OOM"})},
+        @now
+      )
+
+    assert stage(timeline, :otp).state == :error
+    assert stage(timeline, :otp).error == "OOM"
+  end
 end
