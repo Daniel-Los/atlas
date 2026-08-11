@@ -6,11 +6,19 @@ defmodule Atlas.Control.ApplyTimelineTest do
 
   @now ~U[2026-08-11 20:00:00Z]
 
+  @later ~U[2026-08-11 21:30:00Z]
+
   defp start_timeline(services \\ []) do
     ApplyTimeline.start(["Germany"], services, @now)
   end
 
   defp stage(%Timeline{stages: stages}, key), do: Enum.find(stages, &(&1.key == key))
+
+  defp event(timeline, event, now \\ @now),
+    do: ApplyTimeline.apply_event(timeline, event, now)
+
+  defp restarting(timeline, services, now \\ @now),
+    do: event(timeline, {:apply_restarting, services}, now)
 
   test "a fresh timeline lists the applier stages as pending" do
     timeline = start_timeline()
@@ -155,11 +163,9 @@ defmodule Atlas.Control.ApplyTimelineTest do
   test "an adopted service reports its ingest phase and real percentage" do
     timeline =
       start_timeline(["valhalla"])
-      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :restarting}}, @now)
-      |> ApplyTimeline.apply_event(
-        {:service_update, snapshot("valhalla", %{phase: "building-tiles", progress: 0.34})},
-        @now
-      )
+      |> event({:apply_progress, %{phase: :restarting}})
+      |> restarting(["valhalla"])
+      |> event({:service_update, tiles_snapshot()})
 
     valhalla = stage(timeline, :valhalla)
 
@@ -171,11 +177,9 @@ defmodule Atlas.Control.ApplyTimelineTest do
   test "a service reporting ready completes its stage" do
     timeline =
       start_timeline(["overpass"])
-      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :restarting}}, @now)
-      |> ApplyTimeline.apply_event(
-        {:service_update, snapshot("overpass", %{phase: "ready", ready?: true})},
-        @now
-      )
+      |> event({:apply_progress, %{phase: :restarting}})
+      |> restarting(["overpass"])
+      |> event({:service_update, snapshot("overpass", %{phase: "ready", ready?: true})})
 
     assert stage(timeline, :overpass).state == :done
   end
@@ -183,10 +187,7 @@ defmodule Atlas.Control.ApplyTimelineTest do
   test "a service this job never restarted is not adopted" do
     timeline =
       start_timeline(["valhalla"])
-      |> ApplyTimeline.apply_event(
-        {:service_update, snapshot("overpass", %{phase: "ingesting"})},
-        @now
-      )
+      |> event({:service_update, snapshot("overpass", %{phase: "ingesting"})})
 
     assert stage(timeline, :overpass) == nil
 
@@ -194,17 +195,191 @@ defmodule Atlas.Control.ApplyTimelineTest do
              [:download, :merge, :stage_otp, :convert, :valhalla]
   end
 
+  test "a seeded but not-yet-restarted row ignores that service's snapshots" do
+    # The row exists from apply_start so `step N of M` is stable, but until
+    # {:apply_restarting, …} names it the service is nobody's business: a
+    # hand restart mid-apply must not be credited to this job.
+    timeline = start_timeline(["valhalla"])
+
+    result =
+      event(timeline, {:service_update, snapshot("valhalla", %{phase: "parsing", progress: 0.1})})
+
+    assert result == timeline
+    assert stage(result, :valhalla).state == :pending
+  end
+
   test "a failing service errors its stage" do
     timeline =
       start_timeline(["otp"])
-      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :restarting}}, @now)
-      |> ApplyTimeline.apply_event(
-        {:service_update, snapshot("otp", %{status: :error, last_error: "OOM"})},
-        @now
-      )
+      |> event({:apply_progress, %{phase: :restarting}})
+      |> restarting(["otp"])
+      |> event({:service_update, snapshot("otp", %{status: :error, last_error: "OOM"})})
 
     assert stage(timeline, :otp).state == :error
     assert stage(timeline, :otp).error == "OOM"
+  end
+
+  @all_sidecars ["valhalla", "overpass", "otp"]
+
+  defp tiles_snapshot, do: snapshot("valhalla", %{phase: "building-tiles", progress: 0.34})
+  defp parsing_snapshot, do: snapshot("valhalla", %{phase: "parsing", progress: 0.1})
+  defp valhalla_topic, do: "control:service:valhalla"
+
+  defp ingesting_timeline do
+    start_timeline(@all_sidecars)
+    |> event({:apply_progress, %{phase: :restarting}})
+    |> restarting(@all_sidecars)
+    |> event({:service_update, snapshot("valhalla", %{phase: "building-tiles", progress: 0.34})})
+  end
+
+  defp convert_failed_timeline do
+    start_timeline(@all_sidecars)
+    |> event({:apply_progress, %{phase: :converting, region: nil}})
+    |> event({:apply_progress, %{phase: :restarting}})
+    |> restarting(["valhalla", "otp"])
+    |> event({:service_update, snapshot("valhalla", %{phase: "building-tiles", progress: 0.34})})
+    |> event({:service_update, snapshot("otp", %{phase: "building-graph", progress: 0.12})})
+    |> event({:apply_error, %{phase: :converting, reason: "no space left on device"}}, @later)
+  end
+
+  # Stage keys are looked up from a literal map rather than derived from the
+  # name at runtime: nothing in this file should depend on the atom table.
+  @stage_keys %{"valhalla" => :valhalla, "overpass" => :overpass, "otp" => :otp}
+
+  defp service_measure_for(name, fields) do
+    start_timeline([name])
+    |> restarting([name])
+    |> event({:service_update, snapshot(name, fields)})
+    |> stage(Map.fetch!(@stage_keys, name))
+  end
+
+  describe "apply_done next to a live sidecar" do
+    test "apply_done leaves an ingesting sidecar running, never done" do
+      timeline = event(ingesting_timeline(), {:apply_done, %{}}, @later)
+
+      valhalla = stage(timeline, :valhalla)
+
+      assert valhalla.state == :running,
+             "docker compose restart returning is not Valhalla finishing"
+
+      assert valhalla.finished_at == nil
+      assert valhalla.detail == "building-tiles"
+
+      applier = [:download, :merge, :stage_otp, :convert]
+      assert Enum.all?(applier, &(stage(timeline, &1).state == :done))
+    end
+
+    test "the timeline stays running while a sidecar is still ingesting" do
+      timeline = event(ingesting_timeline(), {:apply_done, %{}}, @later)
+
+      assert timeline.status == :running
+      assert timeline.finished_at == nil
+      assert timeline.applier_finished_at == @later
+    end
+
+    test "the timeline finishes once the last ingesting sidecar reports ready" do
+      timeline =
+        ingesting_timeline()
+        |> event({:apply_done, %{}}, @later)
+        |> event({:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})}, @later)
+
+      assert timeline.status == :done
+      assert timeline.finished_at == @later
+      assert stage(timeline, :valhalla).state == :done
+    end
+
+    test "a sidecar row never moves back out of done" do
+      timeline =
+        ingesting_timeline()
+        |> event({:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})})
+        |> event({:service_update, parsing_snapshot()}, @later)
+
+      assert stage(timeline, :valhalla).state == :done
+    end
+
+    test "a sidecar that never reported does not hold the timeline open" do
+      # Every ingest service is named in {:apply_restarting, …}; the applier
+      # only filters by `enabled?` afterwards. A disabled sidecar therefore
+      # gets an adopted row and then never ticks — it must not pin the
+      # timeline to :running forever.
+      timeline =
+        start_timeline(@all_sidecars)
+        |> restarting(@all_sidecars)
+        |> event({:apply_done, %{}}, @later)
+
+      assert timeline.status == :done
+    end
+  end
+
+  describe "sidecar percentages" do
+    test "a measured phase keeps its percentage" do
+      valhalla = service_measure_for("valhalla", %{phase: "building-tiles", progress: 0.34})
+      otp = service_measure_for("otp", %{phase: "building-graph", progress: 0.55})
+
+      assert ApplyTimeline.percentage(valhalla.measure) == 34
+      assert ApplyTimeline.percentage(otp.measure) == 55
+    end
+
+    test "an invented phase marker never becomes a percentage" do
+      # These numbers are hardcoded in the parsers as phase markers, not
+      # measured: Parsers.Overpass writes 0.6 for every "ingesting" line and
+      # 0.2 for every "downloading" one; Parsers.OTP writes 0.7/0.9/0.5/0.2.
+      # Rendering them would print "Overpass ingesting 60%".
+      for {name, phase, progress} <- [
+            {"overpass", "ingesting", 0.6},
+            {"overpass", "downloading", 0.2},
+            {"otp", "trip-patterns", 0.7},
+            {"otp", "saving-graph", 0.9},
+            {"otp", "loading-osm", 0.2},
+            {"valhalla", "building-elevation", 0.4},
+            {"valhalla", "building-admins", 0.3},
+            {"valhalla", "parsing", 0.1}
+          ] do
+        found = service_measure_for(name, %{phase: phase, progress: progress})
+
+        assert found.measure == nil,
+               "#{name} #{phase} carries an invented #{progress}, which must not render"
+
+        assert found.detail == phase, "the phase text is what the row falls back to"
+      end
+    end
+  end
+
+  test "a repeated ready snapshot folds into no change at all" do
+    # ServiceState broadcasts on every log line a ready service emits (each
+    # one changes `last_log`, which `changed?/2` does not filter). If the
+    # fold restamps anything, `maybe_publish/2` pushes a whole %Timeline{}
+    # — and the Repo.all behind SettingsPanel.update/2 — per routing request.
+    ready = {:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})}
+
+    settled =
+      start_timeline(["valhalla"])
+      |> restarting(["valhalla"])
+      |> event({:service_update, snapshot("valhalla", %{phase: "building-tiles", progress: 0.9})})
+      |> event(ready)
+      |> event({:apply_done, %{}})
+
+    assert settled.status == :done
+    assert event(settled, ready, @later) == settled
+  end
+
+  describe "a restart that leaves a service behind" do
+    test "the excluded service gets a skipped row with a reason, not no row" do
+      overpass = stage(convert_failed_timeline(), :overpass)
+
+      assert overpass, "Overpass must have a row even though it was not restarted"
+      assert overpass.state == :skipped
+      assert overpass.detail =~ "not restarted"
+    end
+
+    test "apply_error leaves the services that ARE running alone" do
+      timeline = convert_failed_timeline()
+
+      assert stage(timeline, :valhalla).state == :running
+      assert stage(timeline, :otp).state == :running
+      assert stage(timeline, :convert).state == :error
+      assert timeline.status == :error
+    end
   end
 
   test "a service name outside the known ingest set is ignored entirely" do
@@ -234,25 +409,97 @@ defmodule Atlas.Control.ApplyTimelineTest do
     assert result == timeline
   end
 
-  test "adopt_services/2 adds only recognized services and never raises on an unknown name" do
-    timeline = start_timeline()
-
-    result = ApplyTimeline.adopt_services(timeline, ["overpass", "not-a-real-service"])
+  test "apply_restarting adds only recognized services and never raises on an unknown name" do
+    result = restarting(start_timeline(), ["overpass", "not-a-real-service"])
 
     assert Enum.map(result.stages, & &1.key) ==
              [:download, :merge, :stage_otp, :convert, :overpass]
   end
 
-  test "adopt_services/2 does not duplicate a service the job already listed" do
-    timeline = start_timeline(["valhalla"])
-
-    result = ApplyTimeline.adopt_services(timeline, ["valhalla"])
+  test "apply_restarting does not duplicate a service the job already listed" do
+    result = restarting(start_timeline(["valhalla"]), ["valhalla"])
 
     assert Enum.map(result.stages, & &1.key) ==
              [:download, :merge, :stage_otp, :convert, :valhalla]
   end
 
   describe "server" do
+    test "init/1 broadcasts {:timeline, nil} so subscribers drop a stale timeline" do
+      # This is the whole of the crash handling: under :rest_for_one a
+      # RegionApplier crash restarts us with state nil, but the LiveViews
+      # subscribed to our topic outlive our pid. Without this broadcast they
+      # keep rendering a frozen :running timeline forever. Subscribe first —
+      # the broadcast happens inside init/1.
+      Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic())
+
+      start_supervised!(Atlas.Control.ApplyTimeline)
+
+      assert_receive {:timeline, nil}, 1_000
+    end
+
+    test "the step count is fixed at apply_start and does not grow mid-run" do
+      start_supervised!(Atlas.Control.ApplyTimeline)
+      Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic())
+
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:apply",
+        {:apply_start, %{job_id: "j5", regions: ["Germany"]}}
+      )
+
+      assert_receive {:timeline, %Timeline{job_id: "j5", stages: stages}}, 1_000
+
+      assert Enum.map(stages, & &1.key) ==
+               [:download, :merge, :stage_otp, :convert, :valhalla, :overpass, :otp]
+
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:apply",
+        {:apply_restarting, ["valhalla", "otp"]}
+      )
+
+      assert_receive {:timeline, %Timeline{stages: after_restart}}, 1_000
+
+      assert length(after_restart) == length(stages),
+             "M in `step N of M` must not change mid-run"
+    end
+
+    test "a ready service's repeated log ticks do not rebroadcast the timeline" do
+      start_supervised!(Atlas.Control.ApplyTimeline)
+      Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic())
+
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:apply",
+        {:apply_start, %{job_id: "j6", regions: ["Germany"]}}
+      )
+
+      assert_receive {:timeline, %Timeline{job_id: "j6"}}, 1_000
+
+      Phoenix.PubSub.broadcast(Atlas.PubSub, "control:apply", {:apply_restarting, ["valhalla"]})
+      assert_receive {:timeline, %Timeline{}}, 1_000
+
+      ready = %{
+        name: "valhalla",
+        status: :running,
+        phase: "ready",
+        progress: 1.0,
+        ready?: true,
+        last_error: nil
+      }
+
+      Phoenix.PubSub.broadcast(Atlas.PubSub, "control:service:valhalla", {:service_update, ready})
+      assert_receive {:timeline, %Timeline{}}, 1_000
+
+      # Valhalla now serves; every `GET / HTTP` line makes ServiceState
+      # broadcast again. None of those may reach the LiveViews.
+      for _ <- 1..3 do
+        Phoenix.PubSub.broadcast(Atlas.PubSub, valhalla_topic(), {:service_update, ready})
+      end
+
+      refute_receive {:timeline, _}, 200
+    end
+
     test "broadcasts a timeline and answers current/0" do
       start_supervised!(Atlas.Control.ApplyTimeline)
       Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic())
@@ -288,10 +535,14 @@ defmodule Atlas.Control.ApplyTimelineTest do
       assert_receive {:timeline, %Timeline{} = timeline}, 1_000
 
       assert Enum.map(timeline.stages, & &1.key) ==
-               [:download, :merge, :stage_otp, :convert, :valhalla]
+               [:download, :merge, :stage_otp, :convert, :valhalla, :overpass, :otp]
 
-      assert %Timeline{stages: stages} = ApplyTimeline.current()
-      assert Enum.map(stages, & &1.key) == [:download, :merge, :stage_otp, :convert, :valhalla]
+      assert stage(timeline, :valhalla).state == :running
+      assert stage(timeline, :overpass).state == :skipped
+      assert stage(timeline, :otp).state == :skipped
+
+      assert %Timeline{} = current = ApplyTimeline.current()
+      assert stage(current, :valhalla).state == :running
     end
 
     test "does not rebroadcast when a service update folds into no change" do

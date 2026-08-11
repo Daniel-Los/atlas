@@ -10,6 +10,13 @@ defmodule Atlas.Control.ApplyTimeline do
   A `Measure` with `total: nil` means the total is genuinely unknown. Callers
   must render observed facts (bytes so far, elapsed) rather than a bar;
   `percentage/1` returns `nil` for such a measure by construction.
+
+  ## The applier is not the finish line
+
+  `{:apply_done, …}` fires the moment `docker compose restart` returns, with
+  Valhalla possibly hours from serving a route. It therefore completes only
+  the *applier* stages; each sidecar row finishes on its own `ready?`. A
+  sidecar row never moves backwards out of `:done`.
   """
 
   defmodule Measure do
@@ -63,6 +70,7 @@ defmodule Atlas.Control.ApplyTimeline do
       :job_id,
       :started_at,
       :finished_at,
+      :applier_finished_at,
       regions: [],
       status: :running,
       current_step: 1,
@@ -86,19 +94,38 @@ defmodule Atlas.Control.ApplyTimeline do
 
   # Sidecars a region apply can restart (mirrors RegionApplier's
   # `@ingest_services`). A compile-time literal map — not
-  # `String.to_existing_atom/1` — turns the broadcast's string name into a
+  # `String.to_existing_atom/1` — turns a broadcast's string name into a
   # stage key. `to_existing_atom/1` only succeeds once something has called
-  # `String.to_atom/1` on that exact string at runtime; in production that
-  # happens solely via `service_stage/1` inside `start/3`, for whichever
-  # services *this* job restarts. A `:service_update` for a known service
-  # this BEAM has genuinely never restarted (fresh boot, e.g. "overpass"
-  # broadcasting before any apply job's `services` list ever included it)
-  # would hit an atom that was never created and raise `ArgumentError`. The
-  # atoms below are literals in this module's own source, so they exist the
-  # moment this module is loaded — independent of what `start/3` has or
-  # hasn't been called with. `Map.fetch/2` then can only ever hit or miss,
-  # never raise.
+  # `String.to_atom/1` on that exact string at runtime, so a `:service_update`
+  # for a known service this BEAM has never turned into an atom (fresh boot,
+  # e.g. "overpass" broadcasting before any apply job ran) would hit an atom
+  # that was never created and raise `ArgumentError`. The atoms below are
+  # literals in this module's own source, so they exist the moment the module
+  # is loaded. `Map.fetch/2` can then only ever hit or miss, never raise.
   @service_atoms %{"valhalla" => :valhalla, "overpass" => :overpass, "otp" => :otp}
+  @service_keys Map.values(@service_atoms)
+
+  # The same set as names, seeded at `:apply_start` so `step N of M` is fixed
+  # for the whole run (the data-model note in the spec says M stays stable).
+  # `{:apply_restarting, …}` then says which of them were actually restarted;
+  # the rest are marked `:skipped` rather than silently dropped, so "why is
+  # my Overpass data stale" has a row to answer it.
+  @ingest_services ~w(valhalla overpass otp)
+
+  # The only two parser phases whose number is measured rather than invented:
+  # both come from a literal `(N%)` in the service's own log
+  # (`Parsers.Valhalla`'s `@progress_re`, `Parsers.OTP`'s `@street_graph_re`).
+  # Every other phase carries a hardcoded marker — Overpass "ingesting" is
+  # always 0.6, OTP "loading-osm" always 0.2 — which rendered as a percentage
+  # would be exactly the synthetic progress this feature exists to avoid. The
+  # parsers stay untouched; other surfaces consume them.
+  @measured_phases ~w(building-tiles building-graph)
+
+  # A sidecar the applier chose not to restart. The applier excludes one
+  # exactly when the artifact it consumes failed to build (see
+  # `RegionApplier.run_pipeline/4`'s `@ingest_services -- ["overpass"]`), but
+  # the timeline only observes the exclusion, so it says only that.
+  @not_restarted "not restarted by this apply"
 
   use GenServer
 
@@ -132,16 +159,12 @@ defmodule Atlas.Control.ApplyTimeline do
 
   @impl true
   def handle_info({:apply_start, %{job_id: job_id, regions: regions}}, _timeline) do
-    timeline = %{start(regions, [], now()) | job_id: job_id}
+    timeline = %{start(regions, @ingest_services, now()) | job_id: job_id}
     {:noreply, publish(timeline)}
   end
 
   # Before an apply starts there is nothing to fold into.
   def handle_info(_event, nil), do: {:noreply, nil}
-
-  def handle_info({:apply_restarting, services}, timeline) do
-    {:noreply, maybe_publish(timeline, adopt_services(timeline, services))}
-  end
 
   def handle_info(event, timeline) do
     {:noreply, maybe_publish(timeline, apply_event(timeline, event, now()))}
@@ -163,19 +186,6 @@ defmodule Atlas.Control.ApplyTimeline do
 
   defp now, do: DateTime.utc_now()
 
-  @doc false
-  def adopt_services(%Timeline{stages: stages} = timeline, services) do
-    existing = MapSet.new(stages, & &1.key)
-
-    added =
-      services
-      |> Enum.flat_map(&resolve_service_atom/1)
-      |> Enum.reject(&MapSet.member?(existing, &1))
-      |> Enum.map(&new_service_stage/1)
-
-    %{timeline | stages: stages ++ added}
-  end
-
   defp resolve_service_atom(name) do
     case Map.fetch(@service_atoms, name) do
       {:ok, key} -> [key]
@@ -183,11 +193,14 @@ defmodule Atlas.Control.ApplyTimeline do
     end
   end
 
-  defp new_service_stage(key), do: %Stage{key: key, label: key |> Atom.to_string() |> String.capitalize()}
+  defp new_service_stage(key),
+    do: %Stage{key: key, label: key |> Atom.to_string() |> String.capitalize()}
 
   @doc """
-  Build the initial timeline. `services` are the sidecars this job will
-  restart; only those get a row (see the attribution rule in the spec).
+  Build the initial timeline. `services` are the sidecars in this job's
+  journey; each gets a `:pending` row up front so `step N of M` never changes
+  M mid-run. A row only starts folding its service's snapshots once
+  `{:apply_restarting, …}` names it — the attribution rule in the spec.
   """
   def start(regions, services, now) do
     %Timeline{
@@ -195,8 +208,14 @@ defmodule Atlas.Control.ApplyTimeline do
       started_at: now,
       status: :running,
       current_step: 1,
-      stages: Enum.map(@applier_stages, &stage/1) ++ Enum.map(services, &service_stage/1)
+      stages: Enum.map(@applier_stages, &stage/1) ++ service_stages(services)
     }
+  end
+
+  defp service_stages(services) do
+    services
+    |> Enum.flat_map(&resolve_service_atom/1)
+    |> Enum.map(&new_service_stage/1)
   end
 
   @doc "Percentage for a measure, or nil when the total is unknown."
@@ -234,13 +253,29 @@ defmodule Atlas.Control.ApplyTimeline do
     |> recompute_step()
   end
 
+  # Which sidecars the applier actually restarted. The named ones start
+  # folding their ServiceState snapshots from here; the rest are settled as
+  # `:skipped` — they are part of this journey and their absence is itself
+  # the answer to "why is that service's data stale".
+  def apply_event(timeline, {:apply_restarting, services}, now) do
+    keys = Enum.flat_map(services, &resolve_service_atom/1)
+
+    timeline
+    |> ensure_service_stages(keys)
+    |> resolve_restart(MapSet.new(keys), now)
+    |> recompute_step()
+  end
+
+  # The applier's own work is over; the sidecars' is not. Completing every
+  # stage here would stamp `✓` on a Valhalla that is three hours from
+  # serving, so only the applier stages finish. The timeline itself settles
+  # in `maybe_finish/2`, once no adopted sidecar is still ingesting.
   def apply_event(timeline, {:apply_done, _payload}, now) do
-    %{
-      timeline
-      | status: :done,
-        finished_at: now,
-        stages: Enum.map(timeline.stages, &finish_stage(&1, now))
-    }
+    timeline
+    |> complete_applier_stages(now)
+    |> Map.put(:applier_finished_at, now)
+    |> recompute_step()
+    |> maybe_finish(now)
   end
 
   def apply_event(timeline, {:apply_error, %{phase: phase} = payload}, now) do
@@ -258,50 +293,102 @@ defmodule Atlas.Control.ApplyTimeline do
 
   def apply_event(timeline, {:service_update, %{name: name} = snapshot}, now) do
     case Map.fetch(@service_atoms, name) do
-      {:ok, key} -> adopt_service(timeline, key, snapshot, now)
+      {:ok, key} -> fold_service_update(timeline, key, snapshot, now)
       :error -> timeline
     end
   end
 
   def apply_event(timeline, _event, _now), do: timeline
 
-  defp adopt_service(timeline, key, snapshot, now) do
-    if Enum.any?(timeline.stages, &(&1.key == key)) do
+  defp ensure_service_stages(%Timeline{stages: stages} = timeline, keys) do
+    existing = MapSet.new(stages, & &1.key)
+    added = keys |> Enum.reject(&MapSet.member?(existing, &1)) |> Enum.map(&new_service_stage/1)
+
+    %{timeline | stages: stages ++ added}
+  end
+
+  defp resolve_restart(%Timeline{stages: stages} = timeline, restarted, now) do
+    %{timeline | stages: Enum.map(stages, &restart_outcome(&1, restarted, now))}
+  end
+
+  defp restart_outcome(%Stage{state: :pending, key: key} = stage, restarted, now) do
+    cond do
+      not sidecar?(key) -> stage
+      MapSet.member?(restarted, key) -> %{stage | state: :running, detail: "restarting"}
+      true -> %{stage | state: :skipped, detail: @not_restarted, finished_at: now}
+    end
+  end
+
+  defp restart_outcome(stage, _restarted, _now), do: stage
+
+  defp fold_service_update(timeline, key, snapshot, now) do
+    if adopted?(timeline, key) do
       timeline
       |> put_stage(key, &fold_service(&1, snapshot, now))
       |> recompute_step()
+      |> maybe_finish(now)
     else
       timeline
     end
   end
 
-  defp fold_service(stage, %{status: :error} = snapshot, now) do
-    %{stage | state: :error, error: to_message(snapshot[:last_error]), finished_at: now}
+  # The attribution rule: only a service THIS job restarted may fold its
+  # snapshots in. A row still `:pending` was seeded but never restarted; a
+  # `:skipped` one was explicitly excluded. Letting either absorb a
+  # hand-restart's ticks would credit someone else's ingest to this apply.
+  defp adopted?(timeline, key) do
+    Enum.any?(timeline.stages, &(&1.key == key and &1.state not in [:pending, :skipped]))
   end
 
-  defp fold_service(stage, %{ready?: true}, now) do
-    %{stage | state: :done, detail: "ready", finished_at: now, measure: nil}
+  defp fold_service(stage, %{status: :error} = snapshot, now) do
+    %{
+      stage
+      | state: :error,
+        error: to_message(snapshot[:last_error]),
+        finished_at: stage.finished_at || now
+    }
   end
+
+  # `finished_at || now`, never a fresh `now`: a ready service keeps
+  # broadcasting (every `GET / HTTP` line changes ServiceState's `last_log`,
+  # which `changed?/2` does not filter). Restamping would make each fold
+  # produce a different struct, defeat `maybe_publish/2`, and push a full
+  # `%Timeline{}` — and the `Repo.all` behind `SettingsPanel.update/2` — to
+  # every open LiveView once per routing request, forever.
+  defp fold_service(stage, %{ready?: true}, now) do
+    %{
+      stage
+      | state: :done,
+        detail: "ready",
+        finished_at: stage.finished_at || now,
+        measure: nil
+    }
+  end
+
+  # A finished sidecar stays finished. A later non-ready tick — a hand
+  # restart after this apply, a ServiceState reboot re-deriving `ready?`
+  # from the DB — belongs to a different story and must not un-finish it.
+  defp fold_service(%Stage{state: :done} = stage, _snapshot, _now), do: stage
 
   defp fold_service(stage, snapshot, now) do
     %{
       stage
       | state: :running,
         started_at: stage.started_at || now,
-        detail: snapshot[:phase],
-        measure: service_measure(snapshot[:progress])
+        detail: snapshot[:phase] || stage.detail,
+        measure: service_measure(snapshot[:phase], snapshot[:progress])
     }
   end
 
-  defp service_measure(progress) when is_number(progress),
-    do: %Measure{kind: :fraction, current: progress, total: 1}
+  defp service_measure(phase, progress)
+       when is_number(progress) and phase in @measured_phases,
+       do: %Measure{kind: :fraction, current: progress, total: 1}
 
-  defp service_measure(_progress), do: nil
+  defp service_measure(_phase, _progress), do: nil
+
+  defp sidecar?(key), do: key in @service_keys
 
   defp stage({key, label}), do: %Stage{key: key, label: label}
-
-  defp service_stage(name),
-    do: %Stage{key: String.to_atom(name), label: String.capitalize(name)}
 
   defp put_stage(%Timeline{stages: stages} = timeline, key, fun) do
     %{timeline | stages: Enum.map(stages, fn s -> if s.key == key, do: fun.(s), else: s end)}
@@ -373,16 +460,48 @@ defmodule Atlas.Control.ApplyTimeline do
 
   defp finish_stage(stage, _now), do: %{stage | state: :done}
 
-  defp skip_pending(%Timeline{stages: stages} = timeline, _now) do
-    %{
-      timeline
-      | stages:
-          Enum.map(stages, fn
-            %Stage{state: :pending} = s -> %{s | state: :skipped}
-            s -> s
-          end)
-    }
+  # Only stages that never started. A sidecar already adopted by
+  # `{:apply_restarting, …}` is genuinely ingesting right now — the applier
+  # restarts Valhalla and OTP even when the Overpass conversion failed — and
+  # must keep running rather than be declared skipped.
+  defp skip_pending(%Timeline{stages: stages} = timeline, now) do
+    %{timeline | stages: Enum.map(stages, &skip_if_pending(&1, now))}
   end
+
+  defp skip_if_pending(%Stage{state: :pending, key: key} = stage, now) do
+    detail = if sidecar?(key), do: @not_restarted, else: stage.detail
+    %{stage | state: :skipped, detail: detail, finished_at: now}
+  end
+
+  defp skip_if_pending(stage, _now), do: stage
+
+  # The journey ends when the data is usable, not when the applier returned:
+  # the timeline stays `:running` while an adopted sidecar is still ingesting.
+  #
+  # "Still ingesting" requires the sidecar to have actually reported —
+  # `started_at` is stamped by its first ServiceState tick, not by adoption.
+  # The applier names every ingest service in `{:apply_restarting, …}` and
+  # only filters by `enabled?` afterwards, and services ship disabled, so a
+  # row that never ticks is a service that is not running. Waiting on those
+  # would leave the default install `:running` forever. `:done` is terminal,
+  # so a late first tick can never drag the timeline backwards either.
+  defp maybe_finish(%Timeline{status: status} = timeline, _now) when status != :running,
+    do: timeline
+
+  defp maybe_finish(%Timeline{applier_finished_at: nil} = timeline, _now), do: timeline
+
+  defp maybe_finish(timeline, now) do
+    if Enum.any?(timeline.stages, &still_ingesting?/1) do
+      timeline
+    else
+      %{timeline | status: :done, finished_at: now}
+    end
+  end
+
+  defp still_ingesting?(%Stage{key: key, state: :running, started_at: started_at}),
+    do: sidecar?(key) and not is_nil(started_at)
+
+  defp still_ingesting?(_stage), do: false
 
   defp to_message(reason) when is_binary(reason), do: reason
   defp to_message(reason), do: inspect(reason)

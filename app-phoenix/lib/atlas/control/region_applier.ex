@@ -18,10 +18,17 @@ defmodule Atlas.Control.RegionApplier do
   host-path translation. Every stage broadcasts on the stable topic
   `"control:apply"`:
 
-      {:apply_start,    %{job_id, regions}}
-      {:apply_progress, %{job_id, phase, region, progress}}
-      {:apply_error,    %{job_id, phase, reason}}
-      {:apply_done,     %{job_id, regions}}
+      {:apply_start,      %{job_id, regions}}
+      {:apply_progress,   %{job_id, phase, region, progress, item}}
+      {:apply_restarting, [service_name]}
+      {:apply_error,      %{job_id, phase, reason}}
+      {:apply_done,       %{job_id, regions}}
+
+  `:item` is present only on `:downloading` and names one file
+  (`%{label, source, current, total}`). `{:apply_restarting, names}` carries
+  exactly the ingest services this run hands its fresh data to — a failed
+  Overpass conversion omits `"overpass"` — so the timeline can say which
+  sidecar was left behind, and why.
 
   `status/0` returns the running job, the last failed job (so a page refresh
   can still show what broke), or `nil`.
