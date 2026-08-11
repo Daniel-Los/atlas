@@ -203,12 +203,25 @@ defmodule Atlas.Control.RegionApplier do
     file = Path.basename(url)
     dest = Path.join(sources_dir, file)
 
-    progress_fun = fn bytes, total ->
-      fraction = if total && total > 0, do: bytes / total, else: nil
-      progress(state, job_id, :downloading, %{region: entry.name, progress: fraction})
+    item = fn current, total ->
+      %{label: file, source: url, current: current, total: total}
     end
 
-    progress(state, job_id, :downloading, %{region: entry.name, progress: nil})
+    progress_fun = fn bytes, total ->
+      fraction = if total && total > 0, do: bytes / total, else: nil
+
+      progress(state, job_id, :downloading, %{
+        region: entry.name,
+        progress: fraction,
+        item: item.(bytes, total)
+      })
+    end
+
+    progress(state, job_id, :downloading, %{
+      region: entry.name,
+      progress: nil,
+      item: item.(0, nil)
+    })
 
     case state.downloader.(url, dest, progress_fun) do
       {:ok, _} -> {:ok, file}

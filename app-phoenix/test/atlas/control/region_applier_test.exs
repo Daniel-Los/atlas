@@ -215,6 +215,35 @@ defmodule Atlas.Control.RegionApplierTest do
     assert RegionApplier.status() == nil
   end
 
+  test "download progress names the file, its source URL and byte counts", %{tmp: tmp} do
+    downloader = fn _url, dest, progress_fun ->
+      File.mkdir_p!(Path.dirname(dest))
+      File.write!(dest, "pbf")
+      progress_fun.(512, 2048)
+      {:ok, dest}
+    end
+
+    start_applier(tmp, downloader: downloader)
+    assert {:ok, job_id} = RegionApplier.start(["berlin"])
+
+    assert_receive {:apply_progress,
+                    %{
+                      phase: :downloading,
+                      item: %{
+                        label: "berlin-latest.osm.pbf",
+                        source: "http://example.test/berlin-latest.osm.pbf",
+                        current: 512,
+                        total: 2048
+                      }
+                    }},
+                   2_000
+
+    # Wait for the pipeline to finish so the background Task isn't still
+    # writing into `tmp` when `on_exit` tries to remove it (see the other
+    # tests in this file, all of which wait out the full run).
+    assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+  end
+
   test "two regions merge instead of symlink", %{tmp: tmp} do
     start_applier(tmp)
 
