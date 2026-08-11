@@ -131,7 +131,7 @@ defmodule AtlasWeb.Settings.RegionTab do
                 · {ApplyTimeline.percentage(item.measure)}%
               </span>
               <span :if={is_nil(ApplyTimeline.percentage(item.measure)) and item.measure}>
-                · {bytes(item.measure.current)}
+                · {RegionCatalog.format_bytes(item.measure.current)}
               </span>
               <div :if={item.source} class="ml-5 break-all text-[10.5px] text-base-content/45">
                 {item.source}
@@ -154,11 +154,6 @@ defmodule AtlasWeb.Settings.RegionTab do
   defp stage_class(:error), do: "text-error"
   defp stage_class(:skipped), do: "text-base-content/40"
   defp stage_class(_state), do: ""
-
-  defp bytes(n) when n >= 1_073_741_824, do: "#{Float.round(n / 1_073_741_824, 1)} GB"
-  defp bytes(n) when n >= 1_048_576, do: "#{Float.round(n / 1_048_576, 1)} MB"
-  defp bytes(n) when n >= 1024, do: "#{Float.round(n / 1024, 1)} KB"
-  defp bytes(n), do: "#{n} B"
 
   attr :selection, :any, required: true
   attr :by_name, :map, required: true

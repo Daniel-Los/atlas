@@ -441,16 +441,6 @@ defmodule AtlasWeb.MapLive do
      )}
   end
 
-  def handle_info({:apply_progress, progress}, socket) do
-    case socket.assigns.apply_status do
-      %{job_id: job_id} = status when job_id == progress.job_id ->
-        {:noreply, assign(socket, apply_status: Map.merge(status, progress))}
-
-      _ ->
-        {:noreply, socket}
-    end
-  end
-
   def handle_info({:apply_done, %{job_id: job_id, regions: regions}}, socket) do
     if match?(%{job_id: ^job_id}, socket.assigns.apply_status) do
       {:noreply,

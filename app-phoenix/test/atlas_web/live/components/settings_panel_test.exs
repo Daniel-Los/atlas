@@ -378,9 +378,13 @@ defmodule AtlasWeb.SettingsPanelTest do
       )
 
     send(view.pid, {:timeline, timeline})
-    html = render(view)
 
-    assert html =~ "2.0 KB"
-    refute html =~ "%"
+    timeline_html =
+      view
+      |> element(~s([data-role="apply-timeline"]))
+      |> render()
+
+    assert timeline_html =~ "2.0 KB"
+    refute timeline_html =~ "%"
   end
 end

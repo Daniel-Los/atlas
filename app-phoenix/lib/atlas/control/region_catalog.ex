@@ -229,10 +229,19 @@ defmodule Atlas.Control.RegionCatalog do
   defp kind_size("city"), do: "~15 GB"
   defp kind_size(_), do: nil
 
-  defp format_bytes(b) when b >= 1_000_000_000_000, do: "#{round1(b / 1_000_000_000_000)} TB"
-  defp format_bytes(b) when b >= 1_000_000_000, do: "#{round1(b / 1_000_000_000)} GB"
-  defp format_bytes(b) when b >= 1_000_000, do: "#{round1(b / 1_000_000)} MB"
-  defp format_bytes(b), do: "#{round1(b / 1_000)} KB"
+  @doc """
+  Decimal (base-1000) byte formatter — TB/GB/MB/KB. This is the shared
+  convention for byte counts sourced from Geofabrik downloads (region PBF
+  sizes here, download progress in `AtlasWeb.Settings.RegionTab`): Geofabrik
+  itself advertises file sizes in decimal GB, so a binary/1024-based
+  formatter would render a different, incorrect number under the same "GB"
+  label. Public so other modules format bytes the same way rather than
+  growing their own (in)compatible copy.
+  """
+  def format_bytes(b) when b >= 1_000_000_000_000, do: "#{round1(b / 1_000_000_000_000)} TB"
+  def format_bytes(b) when b >= 1_000_000_000, do: "#{round1(b / 1_000_000_000)} GB"
+  def format_bytes(b) when b >= 1_000_000, do: "#{round1(b / 1_000_000)} MB"
+  def format_bytes(b), do: "#{round1(b / 1_000)} KB"
 
   defp round1(f), do: :erlang.float_to_binary(Float.round(f * 1.0, 1), decimals: 1)
 
