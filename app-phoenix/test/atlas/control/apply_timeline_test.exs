@@ -206,4 +206,31 @@ defmodule Atlas.Control.ApplyTimelineTest do
     assert stage(timeline, :otp).state == :error
     assert stage(timeline, :otp).error == "OOM"
   end
+
+  test "a service name outside the known ingest set is ignored entirely" do
+    # "photon" is a real Atlas service (see Atlas.Control.Parsers.Photon) but
+    # is not one of the three services a region apply can restart, so it is
+    # not a key in `ApplyTimeline`'s service map. Deliberately never written
+    # as the atom `:photon` anywhere else in this file — unlike "valhalla" /
+    # "overpass" / "otp", which this file's own other tests already turn
+    # into atoms via `stage(timeline, :valhalla)` and friends, making them
+    # exist in the atom table before any test body runs. That pre-existence
+    # is exactly what let a prior implementation's `String.to_existing_atom/1`
+    # pass every test here while still being able to raise `ArgumentError` in
+    # production on a genuine fresh-boot first sighting of a known service
+    # name. This test's name carries no such pre-existing atom, so it
+    # actually exercises the "unrecognized name" branch as plain string
+    # comparison — proving the miss path never touches the atom table at
+    # all, regardless of what has or hasn't run before it.
+    timeline = start_timeline()
+
+    result =
+      ApplyTimeline.apply_event(
+        timeline,
+        {:service_update, snapshot("photon", %{phase: "extracting", progress: 0.5})},
+        @now
+      )
+
+    assert result == timeline
+  end
 end

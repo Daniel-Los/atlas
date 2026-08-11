@@ -85,10 +85,20 @@ defmodule Atlas.Control.ApplyTimeline do
   }
 
   # Sidecars a region apply can restart (mirrors RegionApplier's
-  # `@ingest_services`). Gates `String.to_existing_atom/1` below on a known
-  # list instead of a `rescue`, so an unfamiliar service name is ignored
-  # without ever risking atom creation from external input.
-  @known_service_names ~w(valhalla overpass otp)
+  # `@ingest_services`). A compile-time literal map — not
+  # `String.to_existing_atom/1` — turns the broadcast's string name into a
+  # stage key. `to_existing_atom/1` only succeeds once something has called
+  # `String.to_atom/1` on that exact string at runtime; in production that
+  # happens solely via `service_stage/1` inside `start/3`, for whichever
+  # services *this* job restarts. A `:service_update` for a known service
+  # this BEAM has genuinely never restarted (fresh boot, e.g. "overpass"
+  # broadcasting before any apply job's `services` list ever included it)
+  # would hit an atom that was never created and raise `ArgumentError`. The
+  # atoms below are literals in this module's own source, so they exist the
+  # moment this module is loaded — independent of what `start/3` has or
+  # hasn't been called with. `Map.fetch/2` then can only ever hit or miss,
+  # never raise.
+  @service_atoms %{"valhalla" => :valhalla, "overpass" => :overpass, "otp" => :otp}
 
   @doc """
   Build the initial timeline. `services` are the sidecars this job will
@@ -162,11 +172,9 @@ defmodule Atlas.Control.ApplyTimeline do
   end
 
   def apply_event(timeline, {:service_update, %{name: name} = snapshot}, now) do
-    if name in @known_service_names do
-      key = String.to_existing_atom(name)
-      adopt_service(timeline, key, snapshot, now)
-    else
-      timeline
+    case Map.fetch(@service_atoms, name) do
+      {:ok, key} -> adopt_service(timeline, key, snapshot, now)
+      :error -> timeline
     end
   end
 
