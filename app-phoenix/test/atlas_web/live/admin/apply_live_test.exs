@@ -198,4 +198,35 @@ defmodule AtlasWeb.Admin.ApplyLiveTest do
     refute html =~ "Confirm Apply"
     assert html =~ "Project"
   end
+
+  test "the admin apply page renders the same timeline detail", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/admin/apply")
+
+    timeline =
+      ["Germany"]
+      |> Atlas.Control.ApplyTimeline.start(["valhalla"], DateTime.utc_now())
+      |> Atlas.Control.ApplyTimeline.apply_event(
+        {:apply_progress, %{phase: :restarting}},
+        DateTime.utc_now()
+      )
+      |> Atlas.Control.ApplyTimeline.apply_event(
+        {:service_update,
+         %{
+           name: "valhalla",
+           status: :running,
+           phase: "building-tiles",
+           progress: 0.34,
+           ready?: false,
+           last_error: nil
+         }},
+        DateTime.utc_now()
+      )
+
+    send(view.pid, {:timeline, timeline})
+    html = render(view)
+
+    assert html =~ "building-tiles"
+    assert html =~ "34%"
+    assert html =~ "step 5 of 5"
+  end
 end
