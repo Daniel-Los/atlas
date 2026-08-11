@@ -1,5 +1,5 @@
 defmodule Atlas.Control.ApplyTimelineTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Atlas.Control.ApplyTimeline
   alias Atlas.Control.ApplyTimeline.Timeline
@@ -232,5 +232,42 @@ defmodule Atlas.Control.ApplyTimelineTest do
       )
 
     assert result == timeline
+  end
+
+  describe "server" do
+    test "broadcasts a timeline and answers current/0" do
+      start_supervised!(Atlas.Control.ApplyTimeline)
+      Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic())
+
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:apply",
+        {:apply_start, %{job_id: "j1", regions: ["Germany"]}}
+      )
+
+      assert_receive {:timeline, %Timeline{regions: ["Germany"], status: :running}}, 1_000
+      assert %Timeline{job_id: "j1"} = ApplyTimeline.current()
+    end
+
+    test "ignores service updates when no apply is running" do
+      start_supervised!(Atlas.Control.ApplyTimeline)
+
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:service:valhalla",
+        {:service_update,
+         %{
+           name: "valhalla",
+           status: :running,
+           phase: "building-tiles",
+           progress: 0.5,
+           ready?: false,
+           last_error: nil
+         }}
+      )
+
+      Process.sleep(50)
+      refute ApplyTimeline.current()
+    end
   end
 end

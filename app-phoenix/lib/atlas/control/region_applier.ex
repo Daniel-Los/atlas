@@ -358,6 +358,7 @@ defmodule Atlas.Control.RegionApplier do
 
   defp restart_services(state, job_id, services) do
     progress(state, job_id, :restarting, %{region: nil, progress: nil})
+    broadcast({:apply_restarting, services})
 
     case state.restart.(services) do
       :ok -> :ok

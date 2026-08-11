@@ -100,6 +100,78 @@ defmodule Atlas.Control.ApplyTimeline do
   # never raise.
   @service_atoms %{"valhalla" => :valhalla, "overpass" => :overpass, "otp" => :otp}
 
+  use GenServer
+
+  @topic "control:timeline"
+
+  @doc "Stable PubSub topic carrying `{:timeline, %Timeline{}}`."
+  def topic, do: @topic
+
+  @doc "The current timeline, or nil when no apply has run since boot."
+  def current, do: GenServer.call(__MODULE__, :current)
+
+  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    Phoenix.PubSub.subscribe(Atlas.PubSub, Atlas.Control.RegionApplier.topic())
+
+    Enum.each(Map.keys(@service_atoms), fn name ->
+      Phoenix.PubSub.subscribe(Atlas.PubSub, "control:service:#{name}")
+    end)
+
+    {:ok, nil}
+  end
+
+  @impl true
+  def handle_call(:current, _from, timeline), do: {:reply, timeline, timeline}
+
+  @impl true
+  def handle_info({:apply_start, %{job_id: job_id, regions: regions}}, _timeline) do
+    timeline = %{start(regions, [], now()) | job_id: job_id}
+    {:noreply, publish(timeline)}
+  end
+
+  # Before an apply starts there is nothing to fold into.
+  def handle_info(_event, nil), do: {:noreply, nil}
+
+  def handle_info({:apply_restarting, services}, timeline) do
+    {:noreply, publish(adopt_services(timeline, services))}
+  end
+
+  def handle_info(event, timeline) do
+    {:noreply, publish(apply_event(timeline, event, now()))}
+  end
+
+  defp publish(timeline) do
+    Phoenix.PubSub.broadcast(Atlas.PubSub, @topic, {:timeline, timeline})
+    timeline
+  end
+
+  defp now, do: DateTime.utc_now()
+
+  @doc false
+  def adopt_services(%Timeline{stages: stages} = timeline, services) do
+    existing = MapSet.new(stages, & &1.key)
+
+    added =
+      services
+      |> Enum.flat_map(&resolve_service_atom/1)
+      |> Enum.reject(&MapSet.member?(existing, &1))
+      |> Enum.map(&new_service_stage/1)
+
+    %{timeline | stages: stages ++ added}
+  end
+
+  defp resolve_service_atom(name) do
+    case Map.fetch(@service_atoms, name) do
+      {:ok, key} -> [key]
+      :error -> []
+    end
+  end
+
+  defp new_service_stage(key), do: %Stage{key: key, label: key |> Atom.to_string() |> String.capitalize()}
+
   @doc """
   Build the initial timeline. `services` are the sidecars this job will
   restart; only those get a row (see the attribution rule in the spec).
