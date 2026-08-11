@@ -120,7 +120,11 @@ defmodule Atlas.Control.ApplyTimeline do
       Phoenix.PubSub.subscribe(Atlas.PubSub, "control:service:#{name}")
     end)
 
-    {:ok, nil}
+    # A crash mid-apply (e.g. RegionApplier restarts us under :rest_for_one)
+    # resets state to nil, but subscribers (LiveViews) are still subscribed
+    # to this topic — they outlive our pid. Without this broadcast they'd
+    # keep rendering a frozen, now-stale `:running` timeline forever.
+    {:ok, publish(nil)}
   end
 
   @impl true
@@ -136,12 +140,21 @@ defmodule Atlas.Control.ApplyTimeline do
   def handle_info(_event, nil), do: {:noreply, nil}
 
   def handle_info({:apply_restarting, services}, timeline) do
-    {:noreply, publish(adopt_services(timeline, services))}
+    {:noreply, maybe_publish(timeline, adopt_services(timeline, services))}
   end
 
   def handle_info(event, timeline) do
-    {:noreply, publish(apply_event(timeline, event, now()))}
+    {:noreply, maybe_publish(timeline, apply_event(timeline, event, now()))}
   end
+
+  # Ingest services broadcast a snapshot on every log-derived progress tick,
+  # most of which fold into no change (e.g. a `:service_update` for a
+  # service this job never restarted, so it has no matching stage). Only
+  # publish when the fold actually produced a different timeline, so
+  # subscribers don't get a full `%Timeline{}` push per tick with nothing
+  # new to render.
+  defp maybe_publish(old, new) when old == new, do: new
+  defp maybe_publish(_old, new), do: publish(new)
 
   defp publish(timeline) do
     Phoenix.PubSub.broadcast(Atlas.PubSub, @topic, {:timeline, timeline})

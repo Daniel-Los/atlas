@@ -136,6 +136,9 @@ defmodule Atlas.Control.RegionApplierTest do
       assert File.exists?(Path.join(tmp, "otp/region.osm.pbf")),
              "a broken overpass source must not withhold the fresh PBF from OTP"
 
+      assert_received {:apply_restarting, ["valhalla", "otp"]},
+                      "the timeline must be told exactly which services are being restarted"
+
       assert_received {:restart, services},
                       "valhalla/otp got new data and must still be restarted"
 
@@ -210,6 +213,7 @@ defmodule Atlas.Control.RegionApplierTest do
     assert File.exists?(Path.join(tmp, "otp/vbb.gtfs.zip"))
     refute File.exists?(Path.join(tmp, "otp/graph.obj"))
 
+    assert_received {:apply_restarting, ["valhalla", "overpass", "otp"]}
     assert_received {:restart, ["valhalla", "overpass", "otp"]}
 
     assert RegionApplier.status() == nil

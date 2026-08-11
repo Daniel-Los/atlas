@@ -234,6 +234,24 @@ defmodule Atlas.Control.ApplyTimelineTest do
     assert result == timeline
   end
 
+  test "adopt_services/2 adds only recognized services and never raises on an unknown name" do
+    timeline = start_timeline()
+
+    result = ApplyTimeline.adopt_services(timeline, ["overpass", "not-a-real-service"])
+
+    assert Enum.map(result.stages, & &1.key) ==
+             [:download, :merge, :stage_otp, :convert, :overpass]
+  end
+
+  test "adopt_services/2 does not duplicate a service the job already listed" do
+    timeline = start_timeline(["valhalla"])
+
+    result = ApplyTimeline.adopt_services(timeline, ["valhalla"])
+
+    assert Enum.map(result.stages, & &1.key) ==
+             [:download, :merge, :stage_otp, :convert, :valhalla]
+  end
+
   describe "server" do
     test "broadcasts a timeline and answers current/0" do
       start_supervised!(Atlas.Control.ApplyTimeline)
@@ -247,6 +265,65 @@ defmodule Atlas.Control.ApplyTimelineTest do
 
       assert_receive {:timeline, %Timeline{regions: ["Germany"], status: :running}}, 1_000
       assert %Timeline{job_id: "j1"} = ApplyTimeline.current()
+    end
+
+    test "adopts a restarted service via {:apply_restarting, services} and skips an unknown name" do
+      start_supervised!(Atlas.Control.ApplyTimeline)
+      Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic())
+
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:apply",
+        {:apply_start, %{job_id: "j2", regions: ["Germany"]}}
+      )
+
+      assert_receive {:timeline, %Timeline{job_id: "j2"}}, 1_000
+
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:apply",
+        {:apply_restarting, ["valhalla", "not-a-real-service"]}
+      )
+
+      assert_receive {:timeline, %Timeline{} = timeline}, 1_000
+
+      assert Enum.map(timeline.stages, & &1.key) ==
+               [:download, :merge, :stage_otp, :convert, :valhalla]
+
+      assert %Timeline{stages: stages} = ApplyTimeline.current()
+      assert Enum.map(stages, & &1.key) == [:download, :merge, :stage_otp, :convert, :valhalla]
+    end
+
+    test "does not rebroadcast when a service update folds into no change" do
+      start_supervised!(Atlas.Control.ApplyTimeline)
+      Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic())
+
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:apply",
+        {:apply_start, %{job_id: "j3", regions: ["Germany"]}}
+      )
+
+      assert_receive {:timeline, %Timeline{job_id: "j3"}}, 1_000
+
+      # "valhalla" was never adopted by this job (apply_start carries no
+      # services), so the fold is a no-op: this must not trigger a second
+      # broadcast.
+      Phoenix.PubSub.broadcast(
+        Atlas.PubSub,
+        "control:service:valhalla",
+        {:service_update,
+         %{
+           name: "valhalla",
+           status: :running,
+           phase: "building-tiles",
+           progress: 0.1,
+           ready?: false,
+           last_error: nil
+         }}
+      )
+
+      refute_receive {:timeline, _}, 200
     end
 
     test "ignores service updates when no apply is running" do
