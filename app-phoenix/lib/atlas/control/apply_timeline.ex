@@ -77,6 +77,13 @@ defmodule Atlas.Control.ApplyTimeline do
     {:convert, "Convert for Overpass"}
   ]
 
+  @phase_stage %{
+    downloading: :download,
+    merging: :merge,
+    staging: :stage_otp,
+    converting: :convert
+  }
+
   @doc """
   Build the initial timeline. `services` are the sidecars this job will
   restart; only those get a row (see the attribution rule in the spec).
@@ -106,6 +113,46 @@ defmodule Atlas.Control.ApplyTimeline do
       |> put_item(payload[:item])
     end)
     |> recompute_step()
+  end
+
+  def apply_event(timeline, {:apply_progress, %{phase: phase}}, now)
+      when is_map_key(@phase_stage, phase) do
+    key = Map.fetch!(@phase_stage, phase)
+
+    timeline
+    |> complete_stages_before(key, now)
+    |> put_stage(key, &mark_running(&1, now))
+    |> recompute_step()
+  end
+
+  # `restarting` is the applier handing off to the sidecars: its own work is
+  # done, and the service stages take over from here.
+  def apply_event(timeline, {:apply_progress, %{phase: :restarting}}, now) do
+    timeline
+    |> complete_applier_stages(now)
+    |> recompute_step()
+  end
+
+  def apply_event(timeline, {:apply_done, _payload}, now) do
+    %{
+      timeline
+      | status: :done,
+        finished_at: now,
+        stages: Enum.map(timeline.stages, &finish_stage(&1, now))
+    }
+  end
+
+  def apply_event(timeline, {:apply_error, %{phase: phase} = payload}, now) do
+    key = Map.get(@phase_stage, phase, :convert)
+
+    timeline
+    |> complete_stages_before(key, now)
+    |> put_stage(key, fn stage ->
+      %{stage | state: :error, error: to_message(payload[:reason]), finished_at: now}
+    end)
+    |> skip_pending(now)
+    |> Map.put(:status, :error)
+    |> Map.put(:finished_at, now)
   end
 
   def apply_event(timeline, _event, _now), do: timeline
@@ -158,4 +205,44 @@ defmodule Atlas.Control.ApplyTimeline do
     index = Enum.find_index(stages, &(&1.state in [:running, :pending])) || length(stages) - 1
     %{timeline | current_step: index + 1}
   end
+
+  defp applier_keys, do: Enum.map(@applier_stages, fn {key, _label} -> key end)
+
+  defp complete_stages_before(timeline, key, now) do
+    keys = applier_keys()
+    cutoff = Enum.find_index(keys, &(&1 == key)) || 0
+    earlier = Enum.take(keys, cutoff)
+
+    Enum.reduce(earlier, timeline, fn k, acc ->
+      put_stage(acc, k, &finish_stage(&1, now))
+    end)
+  end
+
+  defp complete_applier_stages(timeline, now) do
+    Enum.reduce(applier_keys(), timeline, fn k, acc ->
+      put_stage(acc, k, &finish_stage(&1, now))
+    end)
+  end
+
+  defp finish_stage(%Stage{state: state} = stage, _now) when state in [:error, :skipped],
+    do: stage
+
+  defp finish_stage(%Stage{finished_at: nil} = stage, now),
+    do: %{stage | state: :done, finished_at: now, items: Enum.map(stage.items, &finish_item/1)}
+
+  defp finish_stage(stage, _now), do: %{stage | state: :done}
+
+  defp skip_pending(%Timeline{stages: stages} = timeline, _now) do
+    %{
+      timeline
+      | stages:
+          Enum.map(stages, fn
+            %Stage{state: :pending} = s -> %{s | state: :skipped}
+            s -> s
+          end)
+    }
+  end
+
+  defp to_message(reason) when is_binary(reason), do: reason
+  defp to_message(reason), do: inspect(reason)
 end

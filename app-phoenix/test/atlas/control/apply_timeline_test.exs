@@ -88,4 +88,60 @@ defmodule Atlas.Control.ApplyTimelineTest do
     assert item.measure.total == nil
     refute ApplyTimeline.percentage(item.measure)
   end
+
+  test "advancing to a later phase completes the earlier stages" do
+    timeline =
+      start_timeline()
+      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :downloading, region: "germany"}}, @now)
+      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :converting, region: nil}}, @now)
+
+    assert stage(timeline, :download).state == :done
+    assert stage(timeline, :merge).state == :done
+    assert stage(timeline, :stage_otp).state == :done
+    assert stage(timeline, :convert).state == :running
+    assert timeline.current_step == 4
+  end
+
+  test "apply_done completes every remaining applier stage" do
+    timeline =
+      start_timeline()
+      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :downloading, region: "germany"}}, @now)
+      |> ApplyTimeline.apply_event({:apply_done, %{}}, @now)
+
+    assert timeline.status == :done
+    assert timeline.finished_at == @now
+    assert Enum.all?(timeline.stages, &(&1.state == :done))
+  end
+
+  test "apply_error marks the failing stage and skips the rest" do
+    timeline =
+      start_timeline()
+      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :converting, region: nil}}, @now)
+      |> ApplyTimeline.apply_event(
+        {:apply_error, %{phase: :converting, reason: "no space left on device"}},
+        @now
+      )
+
+    assert timeline.status == :error
+    assert stage(timeline, :convert).state == :error
+    assert stage(timeline, :convert).error == "no space left on device"
+    assert stage(timeline, :download).state == :done
+  end
+
+  test "apply_error on an early phase skips the untouched later stages" do
+    timeline =
+      start_timeline()
+      |> ApplyTimeline.apply_event({:apply_progress, %{phase: :downloading, region: "germany"}}, @now)
+      |> ApplyTimeline.apply_event(
+        {:apply_error, %{phase: :downloading, reason: "network unreachable"}},
+        @now
+      )
+
+    assert timeline.status == :error
+    assert stage(timeline, :download).state == :error
+    assert stage(timeline, :download).error == "network unreachable"
+    assert stage(timeline, :merge).state == :skipped
+    assert stage(timeline, :stage_otp).state == :skipped
+    assert stage(timeline, :convert).state == :skipped
+  end
 end
