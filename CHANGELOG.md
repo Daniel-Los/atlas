@@ -26,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **`ghcr.io/dawarich-app/atlas/app:latest` now means "newest stable release", not "tip of `main`".** Images are cut from published GitHub releases; pushing to `main` no longer publishes one. Pin a version tag if you were relying on `latest` tracking every merge — and note that a fresh `docker compose pull` will now hold at the last release rather than moving with development.
 - Releases are tagged and published automatically from this file: when the top heading is a version with a date (rather than `Unreleased`), CI tags it, creates the GitHub release, and builds the image. Per-commit builds continue on the OneDev registry for testing.
 - `mix credo --strict` is clean and enforced in CI, with the project's ruleset checked in at `app-phoenix/.credo.exs`. It previously failed on `main` and ran ahead of the test step, so the test suite had never actually executed for a pull request.
+- The deployment-config assertions in `test/deployment_config.test.mjs` now run in CI, on a workflow that triggers when `Caddyfile` or a `compose*.yml` changes. They had no runner, so the reverse-proxy and sidecar defaults they guard could regress silently.
 
 ## [0.3.0] - 2026-06-10
 
