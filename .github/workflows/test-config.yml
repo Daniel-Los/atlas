@@ -1,0 +1,37 @@
+name: test-config
+
+# Guards the deployment config the app cannot check for itself: the reverse
+# proxy headers Phoenix relies on, and the compose defaults that keep the
+# sidecars survivable. These assertions live in test/deployment_config.test.mjs
+# and had no runner at all — every regression they were written to catch could
+# land unnoticed.
+#
+# Separate from test-phoenix.yml on purpose. That workflow scopes itself to
+# `app-phoenix/**` and runs every step inside that directory, so it neither
+# triggers on a Caddyfile or compose change nor can reach a root-level test.
+on:
+  push:
+    paths:
+      - "Caddyfile"
+      - "compose*.yml"
+      - "test/*.test.mjs"
+      - ".github/workflows/test-config.yml"
+  pull_request:
+    paths:
+      - "Caddyfile"
+      - "compose*.yml"
+      - "test/*.test.mjs"
+      - ".github/workflows/test-config.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # The glob rather than `node --test test/`: the directory form also picks
+      # up test/scripts/, which holds a shell test, and fails before running
+      # anything.
+      - run: node --test test/*.test.mjs
