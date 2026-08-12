@@ -10,6 +10,7 @@ defmodule Atlas.Control.RegionApplierTest do
       "berlin" => %RegionCatalog{
         name: "berlin",
         label: "Berlin",
+        country_code: "de",
         pbf_urls: ["http://example.test/berlin-latest.osm.pbf"],
         gtfs_url: "http://example.test/vbb.zip",
         gtfs_name: "vbb.gtfs.zip"
@@ -17,7 +18,20 @@ defmodule Atlas.Control.RegionApplierTest do
       "bayern" => %RegionCatalog{
         name: "bayern",
         label: "Bayern",
+        country_code: "de",
         pbf_urls: ["http://example.test/bayern-latest.osm.pbf"]
+      },
+      "kent" => %RegionCatalog{
+        name: "kent",
+        label: "Kent",
+        country_code: "gb",
+        pbf_urls: ["http://example.test/kent-latest.osm.pbf"]
+      },
+      "europe" => %RegionCatalog{
+        name: "europe",
+        label: "Europe",
+        country_code: "europe",
+        pbf_urls: ["http://example.test/europe-latest.osm.pbf"]
       }
     }
   end
@@ -209,6 +223,12 @@ defmodule Atlas.Control.RegionApplierTest do
     assert File.read!(Path.join(tmp, "otp/region.osm.pbf")) ==
              "data:http://example.test/berlin-latest.osm.pbf"
 
+    # Valhalla's image scans its own /custom_files for *.osm.pbf and refuses to
+    # start without one ("No local PBF files... Nothing to do"). Mounting the
+    # osm dir elsewhere does not help — the file has to land here.
+    assert File.read!(Path.join(tmp, "valhalla/region.osm.pbf")) ==
+             "data:http://example.test/berlin-latest.osm.pbf"
+
     assert File.exists?(Path.join(tmp, "gtfs/vbb.gtfs.zip"))
     assert File.exists?(Path.join(tmp, "otp/vbb.gtfs.zip"))
     refute File.exists?(Path.join(tmp, "otp/graph.obj"))
@@ -217,6 +237,41 @@ defmodule Atlas.Control.RegionApplierTest do
     assert_received {:restart, ["valhalla", "overpass", "otp"]}
 
     assert RegionApplier.status() == nil
+  end
+
+  test "staging pins OTP's time zone when the regions agree on one", %{tmp: tmp} do
+    start_applier(tmp)
+
+    assert {:ok, job_id} = RegionApplier.start(["berlin", "bayern"])
+    assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+    assert %{"osmDefaults" => %{"timeZone" => "Europe/Berlin"}} =
+             tmp |> Path.join("otp/build-config.json") |> File.read!() |> Jason.decode!()
+  end
+
+  test "staging writes no build config when the regions disagree", %{tmp: tmp} do
+    start_applier(tmp)
+
+    assert {:ok, job_id} = RegionApplier.start(["berlin", "kent"])
+    assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+    refute File.exists?(Path.join(tmp, "otp/build-config.json")),
+           "CET and GMT cannot both be right; OTP's warning beats a wrong answer"
+  end
+
+  test "staging clears a stale build config rather than leaving it", %{tmp: tmp} do
+    # A previous Germany-only apply pinned Europe/Berlin. Applying a region that
+    # resolves to nothing must not inherit it — OTP would shift every opening
+    # hour in the new extract by whole hours, silently.
+    File.mkdir_p!(Path.join(tmp, "otp"))
+    File.write!(Path.join(tmp, "otp/build-config.json"), ~s({"osmDefaults":{"timeZone":"Europe/Berlin"}}))
+
+    start_applier(tmp)
+
+    assert {:ok, job_id} = RegionApplier.start(["europe"])
+    assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+    refute File.exists?(Path.join(tmp, "otp/build-config.json"))
   end
 
   test "download progress names the file, its source URL and byte counts", %{tmp: tmp} do

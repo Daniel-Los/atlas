@@ -41,6 +41,8 @@ defmodule Atlas.Control.RegionApplier do
 
   require Logger
 
+  alias Atlas.Control.OtpBuildConfig
+
   @topic "control:apply"
   @ingest_services ~w(valhalla overpass otp)
 
@@ -179,7 +181,8 @@ defmodule Atlas.Control.RegionApplier do
     with {:ok, sources} <- download_pbfs(state, job_id, entries, sources_dir),
          :ok <- download_gtfs(state, job_id, entries, gtfs_dir),
          :ok <- materialize_current(state, job_id, osm_dir, sources_dir, sources),
-         :ok <- stage_otp(state, job_id, osm_dir, gtfs_dir) do
+         :ok <- stage_valhalla(state, job_id, osm_dir),
+         :ok <- stage_otp(state, job_id, osm_dir, gtfs_dir, entries) do
       # Convert last: it only feeds overpass, and it is the one stage that can
       # take hours. Everything valhalla and OTP need is already on disk, so a
       # failed conversion still fails the apply (loudly — see #28) but does not
@@ -333,7 +336,27 @@ defmodule Atlas.Control.RegionApplier do
     end
   end
 
-  defp stage_otp(state, job_id, osm_dir, gtfs_dir) do
+  # Valhalla's image scans its OWN mount (/custom_files) for `*.osm.pbf` and
+  # exits with "No local PBF files ... Nothing to do" when it finds none, then
+  # restart-loops. The region PBF lives in the osm dir, which is mounted at
+  # /osm — somewhere the image never looks — so routing never had tiles to
+  # build from. Stage a copy the same way OTP gets one.
+  defp stage_valhalla(state, job_id, osm_dir) do
+    progress(state, job_id, :staging, %{region: nil, progress: nil})
+    valhalla_dir = Path.join(state.data_dir, "valhalla")
+    File.mkdir_p!(valhalla_dir)
+
+    current = Path.join(osm_dir, "current.osm.pbf")
+    dst = Path.join(valhalla_dir, "region.osm.pbf")
+    File.rm(dst)
+
+    case File.cp(current, dst) do
+      :ok -> :ok
+      {:error, reason} -> {:error, :staging, {:copy, reason}}
+    end
+  end
+
+  defp stage_otp(state, job_id, osm_dir, gtfs_dir, entries) do
     progress(state, job_id, :staging, %{region: nil, progress: nil})
     otp_dir = Path.join(state.data_dir, "otp")
     File.mkdir_p!(otp_dir)
@@ -346,10 +369,30 @@ defmodule Atlas.Control.RegionApplier do
       :ok ->
         stage_otp_gtfs(gtfs_dir, otp_dir)
         File.rm(Path.join(otp_dir, "graph.obj"))
-        :ok
+        stage_otp_build_config(otp_dir, entries)
 
       {:error, reason} ->
         {:error, :staging, {:copy, reason}}
+    end
+  end
+
+  # OTP resolves OSM opening hours against one time zone for the whole extract,
+  # and skips every time-restricted entity when it has none. Pin it when the
+  # selected regions agree; when they do not, delete rather than keep, or the
+  # zone from a previous single-country apply silently outlives its extract.
+  defp stage_otp_build_config(otp_dir, entries) do
+    path = Path.join(otp_dir, "build-config.json")
+
+    case OtpBuildConfig.resolve(entries) do
+      {:ok, zone} ->
+        case File.write(path, OtpBuildConfig.render(zone)) do
+          :ok -> :ok
+          {:error, reason} -> {:error, :staging, {:build_config, reason}}
+        end
+
+      :ambiguous ->
+        File.rm(path)
+        :ok
     end
   end
 
