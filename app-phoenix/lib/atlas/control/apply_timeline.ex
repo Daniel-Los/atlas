@@ -134,12 +134,6 @@ defmodule Atlas.Control.ApplyTimeline do
   # the timeline only observes the exclusion, so it says only that.
   @not_restarted "not restarted by this apply"
 
-  # The other way a sidecar row reaches `:skipped`: it WAS restarted but had
-  # logged nothing by the time the applier finished. That is a guess, and a
-  # later tick disproves it — unlike @not_restarted, which is an observed fact
-  # and must never be adopted back.
-  @no_progress "no progress reported"
-
   use GenServer
 
   @topic "control:timeline"
@@ -149,6 +143,14 @@ defmodule Atlas.Control.ApplyTimeline do
 
   @doc "The current timeline, or nil when no apply has run since boot."
   def current, do: GenServer.call(__MODULE__, :current)
+
+  @doc """
+  Drop the current timeline.
+
+  A finished apply otherwise stays on screen until the next one starts, so the
+  Region tab and `/admin/apply` kept rendering a run that ended days ago.
+  """
+  def dismiss, do: GenServer.call(__MODULE__, :dismiss)
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -169,6 +171,8 @@ defmodule Atlas.Control.ApplyTimeline do
 
   @impl true
   def handle_call(:current, _from, timeline), do: {:reply, timeline, timeline}
+
+  def handle_call(:dismiss, _from, _timeline), do: {:reply, :ok, publish(nil)}
 
   @impl true
   def handle_info({:apply_start, %{job_id: job_id, regions: regions}}, _timeline) do
@@ -392,7 +396,9 @@ defmodule Atlas.Control.ApplyTimeline do
   # A service the applier deliberately excluded keeps its row read-only: a tick
   # from the still-running old container would otherwise turn "not restarted by
   # this apply" into a green tick.
-  defp re_adoptable?(%Stage{state: :skipped, detail: @no_progress}), do: true
+  # `:skipped` means the applier deliberately excluded the service — an
+  # observed fact, not a guess. A tick from the still-running old container
+  # must not turn "not restarted by this apply" into a green tick.
   defp re_adoptable?(%Stage{state: :skipped}), do: false
   # A row that recorded a failed restart stays failed: the old container keeps
   # logging afterwards, and those ticks describe the process that did NOT get
@@ -557,36 +563,16 @@ defmodule Atlas.Control.ApplyTimeline do
       timeline
     else
       timeline
-      |> settle_unstarted_sidecars(now)
       |> Map.merge(%{status: :done, finished_at: now})
       |> recompute_step()
     end
   end
 
-  # A sidecar can be adopted and never start: RegionApplier names every ingest
-  # service in {:apply_restarting, …} and only filters on `enabled?` afterwards,
-  # and services ship disabled. Without this the row sits at running/"restarting"
-  # for the life of the page while the timeline reports itself done.
-  defp settle_unstarted_sidecars(%Timeline{stages: stages} = timeline, now) do
-    %{timeline | stages: Enum.map(stages, &settle_unstarted(&1, now))}
-  end
-
-  defp settle_unstarted(%Stage{key: key, state: :running, started_at: nil} = stage, now) do
-    if sidecar?(key) do
-      # Deliberately not "service is disabled": the applier now announces only
-      # the services it actually restarts, so a row with no tick means we never
-      # heard from it, not that we know it is off.
-      %{stage | state: :skipped, detail: @no_progress, finished_at: now}
-    else
-      stage
-    end
-  end
-
-  defp settle_unstarted(stage, _now), do: stage
-
-  defp still_ingesting?(%Stage{key: key, state: :running, started_at: started_at}),
-    do: sidecar?(key) and not is_nil(started_at)
-
+  # A row is ingesting from the moment it is announced, tick or no tick. The
+  # applier filters on `enabled?` BEFORE announcing, so every named service was
+  # actually restarted and will report — one that has not logged in the seconds
+  # before `:apply_done` is starting, not absent.
+  defp still_ingesting?(%Stage{key: key, state: :running}), do: sidecar?(key)
   defp still_ingesting?(_stage), do: false
 
   # A stage can report a decision it made — which time zone OTP was pinned to,

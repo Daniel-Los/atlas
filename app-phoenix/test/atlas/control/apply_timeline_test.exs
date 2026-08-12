@@ -280,10 +280,12 @@ defmodule Atlas.Control.ApplyTimelineTest do
     end
 
     test "the timeline finishes once the last ingesting sidecar reports ready" do
+      # Every announced sidecar has to report: the journey ends when the data
+      # is usable, and all three ingest services serve it.
       timeline =
-        ingesting_timeline()
-        |> event({:apply_done, %{}}, @later)
-        |> event({:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})}, @later)
+        Enum.reduce(@all_sidecars, event(ingesting_timeline(), {:apply_done, %{}}, @later), fn name, acc ->
+          event(acc, {:service_update, snapshot(name, %{phase: "ready", ready?: true})}, @later)
+        end)
 
       assert timeline.status == :done
       assert timeline.finished_at == @later
@@ -299,17 +301,18 @@ defmodule Atlas.Control.ApplyTimelineTest do
       assert stage(timeline, :valhalla).state == :done
     end
 
-    test "a sidecar that never reported does not hold the timeline open" do
-      # Every ingest service is named in {:apply_restarting, …}; the applier
-      # only filters by `enabled?` afterwards. A disabled sidecar therefore
-      # gets an adopted row and then never ticks — it must not pin the
-      # timeline to :running forever.
+    test "a sidecar the applier excluded does not hold the timeline open" do
+      # Only announced services pin the timeline. One the applier left out —
+      # Overpass, when its source failed to convert — is settled :skipped at
+      # announcement time and must not keep the journey running forever.
       timeline =
         start_timeline(@all_sidecars)
-        |> restarting(@all_sidecars)
+        |> restarting(["valhalla"])
         |> event({:apply_done, %{}}, @later)
+        |> event({:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})}, @later)
 
       assert timeline.status == :done
+      assert stage(timeline, :overpass).state == :skipped
     end
   end
 
@@ -635,15 +638,13 @@ defmodule Atlas.Control.ApplyTimelineTest do
   end
 
   describe "sidecars that never start" do
-    test "a sidecar that reports nothing settles instead of spinning forever" do
-      # Left alone this row sits at running/"restarting" for the life of the
-      # page while the timeline reports :done. It settles without claiming to
-      # know why — the applier now announces only services it actually
-      # restarts, so silence means "we never heard from it", not "it is off".
+    test "the timeline does not claim done while an announced sidecar is silent" do
+      # A service the applier did not restart gets a row that says so, rather
+      # than spinning at "restarting" for the life of the page.
       timeline =
         start_timeline(["valhalla", "overpass"])
         |> event({:apply_progress, %{phase: :restarting}})
-        |> restarting(["valhalla", "overpass"])
+        |> restarting(["valhalla"])
         |> event({:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})})
         |> event({:apply_done, %{}})
 
@@ -651,35 +652,8 @@ defmodule Atlas.Control.ApplyTimelineTest do
       overpass = stage(timeline, :overpass)
 
       assert overpass.state == :skipped
-      assert overpass.detail =~ "no progress reported"
+      assert overpass.detail =~ "not restarted"
       refute timeline.current_step > length(timeline.stages)
-    end
-  end
-  describe "a sidecar that was settled early but then reports" do
-    test "folds its real progress instead of staying 'disabled' forever" do
-      # `settle_unstarted` guesses from "no tick yet" at :apply_done, and a
-      # freshly restarted OTP (JVM boot) has not logged by then. A later tick is
-      # proof the guess was wrong, so the row has to recover.
-      now = ~U[2026-08-12 12:00:00Z]
-
-      timeline =
-        ApplyTimeline.start(["berlin"], ["valhalla", "otp"], now)
-        |> ApplyTimeline.apply_event({:apply_restarting, ["valhalla", "otp"]}, now)
-        |> ApplyTimeline.apply_event({:apply_done, %{regions: ["berlin"]}}, now)
-
-      settled = Enum.find(timeline.stages, &(&1.key == :otp))
-      assert settled.state == :skipped
-
-      recovered =
-        ApplyTimeline.apply_event(
-          timeline,
-          {:service_update, %{name: "otp", status: :starting, phase: "building-graph", progress: 0.4, ready?: false}},
-          now
-        )
-
-      stage = Enum.find(recovered.stages, &(&1.key == :otp))
-      assert stage.state == :running
-      assert stage.detail =~ "building-graph"
     end
   end
 
@@ -811,6 +785,53 @@ defmodule Atlas.Control.ApplyTimelineTest do
         event(timeline, {:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})})
 
       assert stage(later, :valhalla).state == :error
+    end
+  end
+
+  describe "an announced sidecar that has not logged yet" do
+    test "keeps the timeline running rather than settling it done" do
+      # The applier now filters on enabled? BEFORE announcing, so every named
+      # row is a service that was actually restarted and will tick. A Valhalla
+      # that has not logged in the seconds before :apply_done is still starting,
+      # not absent — calling the journey finished there is the exact lie this
+      # timeline exists to remove.
+      timeline =
+        start_timeline(["valhalla"])
+        |> restarting(["valhalla"])
+        |> event({:apply_progress, %{phase: :restarting}})
+        |> event({:apply_done, %{}})
+
+      assert timeline.status == :running
+      assert stage(timeline, :valhalla).state == :running
+    end
+
+    test "finishes once that sidecar reports ready" do
+      timeline =
+        start_timeline(["valhalla"])
+        |> restarting(["valhalla"])
+        |> event({:apply_progress, %{phase: :restarting}})
+        |> event({:apply_done, %{}})
+        |> event({:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})})
+
+      assert timeline.status == :done
+      assert stage(timeline, :valhalla).state == :done
+    end
+  end
+
+  describe "dismiss/0" do
+    test "clears a finished timeline so the card stops occupying the panel" do
+      # Nothing cleared the last timeline until the next apply started, so a
+      # completed run stayed on the Region tab and /admin/apply forever.
+      start_supervised!(Atlas.Control.ApplyTimeline)
+      Phoenix.PubSub.subscribe(Atlas.PubSub, ApplyTimeline.topic())
+
+      send(ApplyTimeline, {:apply_start, %{job_id: "j1", regions: ["berlin"]}})
+      assert_receive {:timeline, %{job_id: "j1"}}
+
+      assert :ok = ApplyTimeline.dismiss()
+
+      assert_receive {:timeline, nil}
+      assert ApplyTimeline.current() == nil
     end
   end
 
