@@ -567,6 +567,20 @@ defmodule AtlasWeb.MapLiveTest do
       refute render(view) =~ "search-results"
     end
 
+    test "a shared link is not re-scoped to the viewer's default viewport", %{conn: conn} do
+      # The map reports its bounds once on load. Treating that as a pan re-ran
+      # the shared query against wherever the viewer's map happened to open.
+      {:ok, view, _html} = live(conn, ~p"/?q=berlin")
+      assert_receive {:photon_params, _}
+
+      render_hook(view, "viewport_changed", %{
+        "bbox" => [-10.0, 35.0, 30.0, 60.0],
+        "programmatic" => true
+      })
+
+      refute_receive {:photon_params, _}, 200
+    end
+
     test "panning still refreshes a list that is on screen", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 

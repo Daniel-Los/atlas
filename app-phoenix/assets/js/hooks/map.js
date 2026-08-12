@@ -61,7 +61,10 @@ export default {
       })
     }
     this.map.on("moveend", this.reportViewport)
-    this.map.once("load", this.reportViewport)
+    // The first report is the map announcing where it opened, not a gesture.
+    // Sending it as a pan re-ran a shared ?q= link against the viewer's own
+    // default bounds and replaced the results the link was meant to show.
+    this.map.once("load", () => this.reportViewport({ atlasProgrammatic: true }))
 
     this.handleEvent("map:fly_to", ({ lat, lon, zoom }) => {
       this.map.flyTo({ center: [lon, lat], zoom: zoom || 14 }, { atlasProgrammatic: true })

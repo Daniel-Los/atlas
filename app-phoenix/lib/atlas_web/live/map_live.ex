@@ -431,8 +431,11 @@ defmodule AtlasWeb.MapLive do
     socket = assign(socket, url_params: Map.drop(params, ["q"]))
     q = Map.get(params, "q", "")
 
-    if q == socket.assigns.search_query do
-      {:noreply, socket}
+    # The dead render is a throwaway that the connected mount immediately
+    # replaces, so searching there bought nothing and cost a second Photon
+    # round trip for every visit to a shared ?q= link.
+    if q == socket.assigns.search_query or not connected?(socket) do
+      {:noreply, assign(socket, search_query: q)}
     else
       {:noreply, run_search(socket, q)}
     end
