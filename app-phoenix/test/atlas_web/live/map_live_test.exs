@@ -321,11 +321,14 @@ defmodule AtlasWeb.MapLiveTest do
 
     test "an unchanged query does not re-run the search", %{conn: conn} do
       # push_patch feeds handle_params, so a naive implementation searches twice
-      # for every keystroke.
+      # for every keystroke. Re-entering handle_params with the SAME q is the
+      # only thing that proves the guard — an unrelated message would pass
+      # whether or not the guard exists.
       {:ok, view, _html} = live(conn, ~p"/?q=berlin")
       assert_push_event(view, "map:set_results", %{points: [_ | _]})
 
-      send(view.pid, {:noop, nil})
+      view |> element("form[phx-change=search]") |> render_change(%{"q" => "berlin"})
+
       refute_push_event(view, "map:set_results", %{points: [_ | _]})
     end
   end
@@ -424,6 +427,27 @@ defmodule AtlasWeb.MapLiveTest do
       refute render(view) =~ "data-active"
     end
 
+    test "escape clears the pins as well as the list", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+      assert_push_event(view, "map:set_results", %{points: [_ | _]})
+
+      render_hook(view, "search_dismiss", %{})
+
+      assert_push_event(view, "map:set_results", %{points: []})
+    end
+
+    test "escape dismisses rather than claiming the search found nothing", %{conn: conn} do
+      # Leaving `searched: true` with an empty list makes the panel answer a
+      # successful search with "No results for berlin", which is a lie.
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+
+      render_hook(view, "search_dismiss", %{})
+
+      refute render(view) =~ "No results"
+    end
+
     test "a fresh search clears any previous highlight", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       view = search(view, "berlin")
@@ -505,6 +529,41 @@ defmodule AtlasWeb.MapLiveTest do
       assert_receive {:photon_params, _}
 
       assert_push_event(view, "map:set_results", %{points: [_ | _]})
+    end
+
+    test "a self-induced move does not undo the selection that caused it", %{conn: conn} do
+      # Selecting a result flies the map, and the resulting moveend used to
+      # re-run the query still sitting in the box — restoring the list and every
+      # marker about a second after the selection dismissed them.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      change(view, "berlin")
+      assert_receive {:photon_params, _}
+
+      view |> element(~s(#search-results button[phx-value-id="N:1"])) |> render_click()
+
+      render_hook(view, "viewport_changed", %{
+        "bbox" => [13.0, 52.3, 13.8, 52.7],
+        "programmatic" => true
+      })
+
+      refute_receive {:photon_params, _}, 200
+      refute render(view) =~ "search-results"
+    end
+
+    test "a self-induced move still updates the viewport for the next search", %{conn: conn} do
+      # Skipping the re-query must not skip recording the bounds, or the next
+      # typed search would be scoped to where the map used to be.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "viewport_changed", %{
+        "bbox" => [9.9, 53.4, 10.1, 53.6],
+        "programmatic" => true
+      })
+
+      change(view, "berlin")
+
+      assert_receive {:photon_params, %{"bbox" => "9.9,53.4,10.1,53.6"}}
     end
 
     test "panning with no active query does not query Photon at all", %{conn: conn} do

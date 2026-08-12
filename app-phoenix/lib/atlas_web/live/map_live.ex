@@ -77,10 +77,16 @@ defmodule AtlasWeb.MapLive do
   # The map reports its viewport after every pan/zoom. Re-running the active
   # query against the new bounds is what makes a brand search ("McDonald's")
   # answer "which ones can I see" instead of "the global top N".
-  def handle_event("viewport_changed", %{"bbox" => [_w, _s, _e, _n] = bbox}, socket) do
+  #
+  # A move we caused ourselves is exempt. Picking a result flies the map, and
+  # treating that flight as a pan re-ran the query still sitting in the box,
+  # restoring the list and every marker a second after the selection dismissed
+  # them. The bounds are still recorded, so the next typed search is scoped to
+  # where the map now is.
+  def handle_event("viewport_changed", %{"bbox" => [_w, _s, _e, _n] = bbox} = params, socket) do
     socket = assign(socket, viewport: bbox)
 
-    if searchable?(socket.assigns.search_query) do
+    if params["programmatic"] != true and searchable?(socket.assigns.search_query) do
       {:noreply, run_search(socket, socket.assigns.search_query)}
     else
       {:noreply, socket}
@@ -106,8 +112,13 @@ defmodule AtlasWeb.MapLive do
     end
   end
 
+  # Dismiss means dismiss: the pins go with the list, and `search_searched`
+  # resets so the panel does not answer a successful search with "No results".
   def handle_event("search_dismiss", _params, socket) do
-    {:noreply, assign(socket, search_results: [], search_active: -1)}
+    {:noreply,
+     socket
+     |> assign(search_results: [], search_active: -1, search_searched: false)
+     |> push_results([])}
   end
 
   @impl true

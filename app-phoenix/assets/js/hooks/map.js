@@ -50,17 +50,21 @@ export default {
     // Report the viewport after every pan/zoom so the server can scope search
     // to what is on screen. `moveend` (not `move`) keeps this to one message
     // per gesture rather than one per frame.
-    this.reportViewport = () => {
+    // `eventData` passed to flyTo comes back on the resulting moveend, which is
+    // how a flight we started is told apart from a pan the user made. Both
+    // report their bounds; only a user pan re-runs the search.
+    this.reportViewport = (event) => {
       const b = this.map.getBounds()
       this.pushEvent("viewport_changed", {
-        bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
+        bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+        programmatic: Boolean(event && event.atlasProgrammatic)
       })
     }
     this.map.on("moveend", this.reportViewport)
     this.map.once("load", this.reportViewport)
 
     this.handleEvent("map:fly_to", ({ lat, lon, zoom }) => {
-      this.map.flyTo({ center: [lon, lat], zoom: zoom || 14 })
+      this.map.flyTo({ center: [lon, lat], zoom: zoom || 14 }, { atlasProgrammatic: true })
     })
 
     // One event owns the whole result-marker set. Replacing wholesale (rather
