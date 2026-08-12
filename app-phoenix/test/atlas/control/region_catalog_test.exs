@@ -210,6 +210,54 @@ defmodule Atlas.Control.RegionCatalogTest do
     end
   end
 
+  describe "country_code backfill" do
+    setup %{dir: dir} do
+      File.write!(
+        Path.join(dir, "catalog.json"),
+        Jason.encode!([
+          %{"name" => "gf:europe", "label" => "Europe", "kind" => "continent", "parent" => nil, "country_code" => nil},
+          %{"name" => "gf:germany", "label" => "Germany", "kind" => "country", "parent" => "gf:europe", "country_code" => "de"},
+          %{"name" => "gf:berlin", "label" => "Berlin", "kind" => "subregion", "parent" => "gf:germany", "country_code" => nil},
+          %{"name" => "bb:kreuzberg", "label" => "Kreuzberg", "kind" => "city", "parent" => "gf:berlin", "country_code" => nil}
+        ])
+      )
+
+      :ok
+    end
+
+    defp by_name(dir), do: Map.new(RegionCatalog.all(dir), &{&1.name, &1})
+
+    test "a subregion inherits its parent country's code", %{dir: dir} do
+      # Geofabrik publishes no country_code below country level, so berlin
+      # arrives as nil even though its country is not in doubt.
+      assert by_name(dir)["gf:berlin"].country_code == "de"
+    end
+
+    test "inheritance walks more than one level up", %{dir: dir} do
+      assert by_name(dir)["bb:kreuzberg"].country_code == "de"
+    end
+
+    test "an entry's own code always wins over its parent's", %{dir: dir} do
+      assert by_name(dir)["gf:germany"].country_code == "de"
+    end
+
+    test "a chain that reaches no code stays nil rather than guessing", %{dir: dir} do
+      assert by_name(dir)["gf:europe"].country_code == nil
+    end
+
+    test "a parent cycle terminates instead of hanging", %{dir: dir} do
+      File.write!(
+        Path.join(dir, "catalog.json"),
+        Jason.encode!([
+          %{"name" => "a", "label" => "A", "kind" => "subregion", "parent" => "b", "country_code" => nil},
+          %{"name" => "b", "label" => "B", "kind" => "subregion", "parent" => "a", "country_code" => nil}
+        ])
+      )
+
+      assert by_name(dir)["a"].country_code == nil
+    end
+  end
+
   describe "all/1 dedupe-enrich" do
     test "collapses a curated preset and a baked entry sharing a PBF URL, adopting hierarchy", %{dir: dir} do
       File.write!(Path.join(dir, "germany.env"), """

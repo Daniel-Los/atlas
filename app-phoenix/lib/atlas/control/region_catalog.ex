@@ -88,7 +88,33 @@ defmodule Atlas.Control.RegionCatalog do
 
     (enriched ++ baked_kept)
     |> Enum.map(&reparent(&1, rename))
+    |> inherit_country_codes()
     |> Enum.sort_by(& &1.name)
+  end
+
+  # Geofabrik publishes no country code below country level, so every subregion
+  # and city arrives as nil even though its country is not in doubt — it is the
+  # one its parent chain names. Anything consuming `country_code` (OTP's build
+  # config picks a time zone from it) would otherwise see two thirds of the
+  # catalog as unknown.
+  defp inherit_country_codes(entries) do
+    by_name = Map.new(entries, &{&1.name, &1})
+    Enum.map(entries, &%{&1 | country_code: resolve_country_code(&1, by_name, MapSet.new())})
+  end
+
+  defp resolve_country_code(%__MODULE__{country_code: cc}, _by_name, _seen)
+       when is_binary(cc) and cc != "",
+       do: cc
+
+  defp resolve_country_code(%__MODULE__{name: name, parent: parent}, by_name, seen) do
+    # `seen` guards a malformed catalog whose parents form a cycle; without it
+    # this recursion would never return.
+    with false <- MapSet.member?(seen, name),
+         %__MODULE__{} = up <- Map.get(by_name, parent) do
+      resolve_country_code(up, by_name, MapSet.put(seen, name))
+    else
+      _ -> nil
+    end
   end
 
   defp reparent(%__MODULE__{parent: p} = e, rename) when is_binary(p) do
