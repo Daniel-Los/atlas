@@ -24,6 +24,16 @@ defmodule AtlasWeb.Components.ApplyTimelineComponent do
         <span class="text-base-content/55">
           · step {@timeline.current_step} of {length(@timeline.stages)}
         </span>
+        <button
+          :if={@timeline.status != :running}
+          type="button"
+          phx-click="dismiss_timeline"
+          class="ml-auto text-base-content/45 transition hover:text-base-content"
+          title="Dismiss"
+          aria-label="Dismiss apply timeline"
+        >
+          ✕
+        </button>
       </div>
 
       <ol class="mt-2 space-y-1.5">

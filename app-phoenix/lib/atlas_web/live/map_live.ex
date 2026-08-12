@@ -135,6 +135,12 @@ defmodule AtlasWeb.MapLive do
   end
 
   @impl true
+  def handle_event("dismiss_timeline", _params, socket) do
+    Safe.call(fn -> ApplyTimeline.dismiss() end)
+    {:noreply, assign(socket, timeline: nil)}
+  end
+
+  @impl true
   def handle_event("set_mode", %{"mode" => mode}, socket) do
     {:noreply, assign(socket, mode: mode)}
   end
