@@ -551,6 +551,33 @@ defmodule AtlasWeb.MapLiveTest do
       refute render(view) =~ "search-results"
     end
 
+    test "panning does not resurrect a list the user dismissed", %{conn: conn} do
+      # select_feature and search_dismiss both leave the query in the box on
+      # purpose. Re-querying on the next pan restored all rows and pins — the
+      # same defect as the fly-to, one gesture later.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      change(view, "berlin")
+      assert_receive {:photon_params, _}
+
+      render_hook(view, "search_dismiss", %{})
+      render_hook(view, "viewport_changed", %{"bbox" => [13.0, 52.3, 13.8, 52.7]})
+
+      refute_receive {:photon_params, _}, 200
+      refute render(view) =~ "search-results"
+    end
+
+    test "panning still refreshes a list that is on screen", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      change(view, "berlin")
+      assert_receive {:photon_params, _}
+
+      render_hook(view, "viewport_changed", %{"bbox" => [13.0, 52.3, 13.8, 52.7]})
+
+      assert_receive {:photon_params, %{"bbox" => "13.0,52.3,13.8,52.7"}}
+    end
+
     test "a self-induced move still updates the viewport for the next search", %{conn: conn} do
       # Skipping the re-query must not skip recording the bounds, or the next
       # typed search would be scoped to where the map used to be.

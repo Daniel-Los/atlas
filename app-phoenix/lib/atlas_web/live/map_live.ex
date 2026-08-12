@@ -86,7 +86,12 @@ defmodule AtlasWeb.MapLive do
   def handle_event("viewport_changed", %{"bbox" => [_w, _s, _e, _n] = bbox} = params, socket) do
     socket = assign(socket, viewport: bbox)
 
-    if params["programmatic"] != true and searchable?(socket.assigns.search_query) do
+    # `search_results != []` is the dismissal test. Both `select_feature` and
+    # `search_dismiss` leave the query in the box deliberately, so re-querying
+    # on the query alone resurrected a list the user had just dismissed — the
+    # fly-to defect one gesture later. A list on screen still refreshes.
+    if params["programmatic"] != true and socket.assigns.search_results != [] and
+         searchable?(socket.assigns.search_query) do
       {:noreply, run_search(socket, socket.assigns.search_query)}
     else
       {:noreply, socket}
