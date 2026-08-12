@@ -74,13 +74,7 @@ export default {
       this.clearResultMarkers()
 
       ;(points || []).forEach((p) => {
-        const marker = new maplibregl.Marker({ element: resultPin(p.label) })
-          .setLngLat([p.lon, p.lat])
-          .setPopup(
-            new maplibregl.Popup({ offset: 14, maxWidth: "320px", className: "apo-poi-popup" })
-              .setHTML(resultPopupHTML(p))
-          )
-          .addTo(this.map)
+        const marker = resultMarker(p).addTo(this.map)
         this.resultMarkers.push(marker)
       })
     })
@@ -128,27 +122,18 @@ export default {
       this._tilesUrl = url || null
       const nextStyle = url ? url : OSM_RASTER_FALLBACK
 
-      // Persist what we want to re-add on the new style. A style swap destroys
-      // marker DOM, so the set has to be rebuilt rather than left dangling.
-      const savedMarkers = this.resultMarkers.map((m) => {
-        const lngLat = m.getLngLat()
-        const popup = m.getPopup()
-        return { lat: lngLat.lat, lon: lngLat.lng, text: popup ? popup.getElement()?.textContent : null }
-      })
+      // A style swap destroys marker DOM, so the set is rebuilt from the point
+      // payloads each marker carries. Reading the popup's DOM instead loses
+      // everything: getElement() is undefined until a popup has been opened, so
+      // most pins came back with no popup at all and opened ones degraded to a
+      // text blob without the OSM link.
+      const savedPoints = this.resultMarkers.map((m) => m._atlasPoint).filter(Boolean)
 
       this.clearResultMarkers()
 
       const onStyle = () => {
-        // The accent is re-read here on purpose: a style swap usually rides
-        // along with a light/dark change, which moves --color-accent.
-        const accent = getComputedStyle(document.documentElement)
-          .getPropertyValue("--color-accent").trim() || "#B86A3A"
-
-        savedMarkers.forEach(({ lat, lon, text }) => {
-          const marker = new maplibregl.Marker({ color: accent }).setLngLat([lon, lat])
-          if (text) marker.setPopup(new maplibregl.Popup({ offset: 16 }).setText(text))
-          marker.addTo(this.map)
-          this.resultMarkers.push(marker)
+        savedPoints.forEach((p) => {
+          this.resultMarkers.push(resultMarker(p).addTo(this.map))
         })
         // Re-add the route source/layer if we had one.
         if (this.routeGeoJSON) this._renderRoute()
@@ -193,6 +178,20 @@ export default {
 // A search pin, styled like the Rails POI marker: an accent dot that reacts to
 // the cursor. MapLibre's default marker has no hover affordance at all, so
 // nothing told you a pin could be clicked.
+// One builder for both paths, so a marker rebuilt after a style swap is
+// identical to the one first drawn — same pin, same popup, same OSM link.
+// `_atlasPoint` is what makes that rebuild possible without reading DOM.
+function resultMarker(p) {
+  const marker = new maplibregl.Marker({ element: resultPin(p.label) })
+    .setLngLat([p.lon, p.lat])
+    .setPopup(
+      new maplibregl.Popup({ offset: 14, maxWidth: "320px", className: "apo-poi-popup" })
+        .setHTML(resultPopupHTML(p))
+    )
+  marker._atlasPoint = p
+  return marker
+}
+
 function resultPin(label) {
   // Two elements on purpose: MapLibre positions a marker by writing
   // `transform: translate(...)` onto the element it is given, so any hover
