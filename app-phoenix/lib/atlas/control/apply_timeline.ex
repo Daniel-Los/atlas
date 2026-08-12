@@ -119,7 +119,14 @@ defmodule Atlas.Control.ApplyTimeline do
   # always 0.6, OTP "loading-osm" always 0.2 — which rendered as a percentage
   # would be exactly the synthetic progress this feature exists to avoid. The
   # parsers stay untouched; other surfaces consume them.
-  @measured_phases ~w(building-tiles building-graph)
+  # Only phases whose number the parser actually measured. `building-tiles` is
+  # deliberately absent: Parsers.Valhalla assigns it a flat 0.5 on sight of
+  # "Running valhalla_build_tiles", and its one real-progress regex matches
+  # "Build street graph progress:" — OpenTripPlanner's wording, which Valhalla
+  # never emits. So 0.5 is the only value that phase can ever report, frozen
+  # for the whole build. Showing it would be the invented number this whole
+  # feature exists to avoid.
+  @measured_phases ~w(building-graph)
 
   # A sidecar the applier chose not to restart. The applier excludes one
   # exactly when the artifact it consumes failed to build (see
@@ -494,9 +501,30 @@ defmodule Atlas.Control.ApplyTimeline do
     if Enum.any?(timeline.stages, &still_ingesting?/1) do
       timeline
     else
-      %{timeline | status: :done, finished_at: now}
+      timeline
+      |> settle_unstarted_sidecars(now)
+      |> Map.merge(%{status: :done, finished_at: now})
+      |> recompute_step()
     end
   end
+
+  # A sidecar can be adopted and never start: RegionApplier names every ingest
+  # service in {:apply_restarting, …} and only filters on `enabled?` afterwards,
+  # and services ship disabled. Without this the row sits at running/"restarting"
+  # for the life of the page while the timeline reports itself done.
+  defp settle_unstarted_sidecars(%Timeline{stages: stages} = timeline, now) do
+    %{timeline | stages: Enum.map(stages, &settle_unstarted(&1, now))}
+  end
+
+  defp settle_unstarted(%Stage{key: key, state: :running, started_at: nil} = stage, now) do
+    if sidecar?(key) do
+      %{stage | state: :skipped, detail: "not started — service is disabled", finished_at: now}
+    else
+      stage
+    end
+  end
+
+  defp settle_unstarted(stage, _now), do: stage
 
   defp still_ingesting?(%Stage{key: key, state: :running, started_at: started_at}),
     do: sidecar?(key) and not is_nil(started_at)

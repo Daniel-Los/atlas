@@ -171,7 +171,9 @@ defmodule Atlas.Control.ApplyTimelineTest do
 
     assert valhalla.state == :running
     assert valhalla.detail == "building-tiles"
-    assert ApplyTimeline.percentage(valhalla.measure) == 34
+    # No percentage: Parsers.Valhalla fabricates building-tiles progress, so
+    # the phase text is all the timeline can honestly report for it.
+    refute ApplyTimeline.percentage(valhalla.measure)
   end
 
   test "a service reporting ready completes its stage" do
@@ -313,10 +315,12 @@ defmodule Atlas.Control.ApplyTimelineTest do
 
   describe "sidecar percentages" do
     test "a measured phase keeps its percentage" do
-      valhalla = service_measure_for("valhalla", %{phase: "building-tiles", progress: 0.34})
+      # building-graph is the only sidecar phase whose number the parser really
+      # captures (OTP's log carries an explicit "(N%)"). building-tiles used to
+      # be asserted here too, but Parsers.Valhalla fabricates that one — see
+      # "an invented phase marker never becomes a percentage" below.
       otp = service_measure_for("otp", %{phase: "building-graph", progress: 0.55})
 
-      assert ApplyTimeline.percentage(valhalla.measure) == 34
       assert ApplyTimeline.percentage(otp.measure) == 55
     end
 
@@ -596,6 +600,59 @@ defmodule Atlas.Control.ApplyTimelineTest do
 
       Process.sleep(50)
       refute ApplyTimeline.current()
+    end
+  end
+
+  describe "no fabricated sidecar percentages" do
+    test "building-tiles carries no measure — its number is a parser placeholder" do
+      # Parsers.Valhalla assigns 0.5 the moment it sees "Running
+      # valhalla_build_tiles", a line with no percentage in it. Its only
+      # real-progress regex matches "Build street graph progress:", which is
+      # OpenTripPlanner's wording and Valhalla never emits — so 0.5 is the ONLY
+      # value this phase can report, frozen for the whole multi-hour build.
+      timeline =
+        start_timeline(["valhalla"])
+        |> event({:apply_progress, %{phase: :restarting}})
+        |> restarting(["valhalla"])
+        |> event({:service_update, snapshot("valhalla", %{phase: "building-tiles", progress: 0.5})})
+
+      valhalla = stage(timeline, :valhalla)
+
+      assert valhalla.state == :running
+      assert valhalla.detail == "building-tiles"
+      refute ApplyTimeline.percentage(valhalla.measure)
+    end
+
+    test "building-graph still reports its measured percentage" do
+      timeline =
+        start_timeline(["otp"])
+        |> event({:apply_progress, %{phase: :restarting}})
+        |> restarting(["otp"])
+        |> event({:service_update, snapshot("otp", %{phase: "building-graph", progress: 0.55})})
+
+      assert ApplyTimeline.percentage(stage(timeline, :otp).measure) == 55
+    end
+  end
+
+  describe "sidecars that never start" do
+    test "a disabled sidecar settles instead of spinning forever" do
+      # RegionApplier broadcasts {:apply_restarting, all_ingest_services} and
+      # only filters on enabled? afterwards, and services ship disabled. Left
+      # alone these rows sit at running/"restarting" for the life of the page
+      # while the timeline reports :done.
+      timeline =
+        start_timeline(["valhalla", "overpass"])
+        |> event({:apply_progress, %{phase: :restarting}})
+        |> restarting(["valhalla", "overpass"])
+        |> event({:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})})
+        |> event({:apply_done, %{}})
+
+      assert stage(timeline, :valhalla).state == :done
+      overpass = stage(timeline, :overpass)
+
+      assert overpass.state == :skipped
+      assert overpass.detail =~ "not"
+      refute timeline.current_step > length(timeline.stages)
     end
   end
 end

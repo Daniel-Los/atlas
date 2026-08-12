@@ -29,7 +29,14 @@ defmodule AtlasWeb.Components.ApplyTimelineComponent do
       <ol class="mt-2 space-y-1.5">
         <li :for={stage <- @timeline.stages} class="font-mono text-[11.5px]">
           <div class="flex items-baseline gap-2">
-            <span class="w-3 text-base-content/55">{state_glyph(stage.state)}</span>
+            <span class="w-3 text-base-content/55">
+              <span
+                :if={stage.state == :running}
+                class="loading loading-spinner loading-xs align-middle"
+              >
+              </span>
+              <span :if={stage.state != :running}>{state_glyph(stage.state)}</span>
+            </span>
             <span class={stage_class(stage.state)}>{stage.label}</span>
             <span :if={stage.detail} class="text-base-content/55">{stage.detail}</span>
             <span :if={ApplyTimeline.percentage(stage.measure)} class="text-base-content/70">

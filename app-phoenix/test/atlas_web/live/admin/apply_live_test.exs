@@ -239,10 +239,13 @@ defmodule AtlasWeb.Admin.ApplyLiveTest do
     html =
       timeline_html(
         view,
-        ingesting_timeline(["valhalla"], [{"valhalla", "building-tiles", 0.34}])
+        ingesting_timeline(["otp"], [{"otp", "building-graph", 0.34}])
       )
 
-    assert html =~ "building-tiles"
+    # building-graph, not building-tiles: OTP's log carries a real "(N%)", so a
+    # percentage here is measured. Valhalla's building-tiles number is
+    # fabricated by the parser and is deliberately never rendered.
+    assert html =~ "building-graph"
     assert html =~ "34%"
     assert html =~ "step 5 of 5"
   end
