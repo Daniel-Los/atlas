@@ -444,13 +444,27 @@ defmodule Atlas.Control.RegionApplier do
   # DockerCompose documents that callers must not discard failures. Swallowing
   # them reported a successful apply for a restart that never happened, leaving
   # the sidecar rows to settle as "no progress reported".
+  #
+  # Every service is attempted even when an earlier one fails: they are
+  # independent, and stopping early would leave the rest on stale data with
+  # nothing said about it.
   defp default_restart(names) do
-    Enum.reduce_while(names, :ok, fn name, :ok ->
-      case Atlas.Control.DockerCompose.restart(name) do
-        {:ok, _output} -> {:cont, :ok}
-        {:error, code, output} -> {:halt, {:error, "#{name}: exit #{code}: #{output}"}}
-      end
-    end)
+    names
+    |> Enum.map(fn name -> {name, Atlas.Control.DockerCompose.restart(name)} end)
+    |> summarize_restarts()
+  end
+
+  @doc """
+  Fold `{name, DockerCompose.restart/1 result}` pairs into `:ok` or a single
+  error naming every service that failed. Public so the reporting is testable
+  without a docker daemon.
+  """
+  def summarize_restarts(results) do
+    failures =
+      for {name, {:error, code, output}} <- results,
+          do: "#{name}: exit #{code}: #{String.trim(to_string(output))}"
+
+    if failures == [], do: :ok, else: {:error, Enum.join(failures, "; ")}
   end
 
   defp progress(state, job_id, phase, extra) do

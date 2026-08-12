@@ -462,4 +462,26 @@ defmodule Atlas.Control.RegionApplierTest do
     send(dl_pid, :proceed)
     assert_receive {:apply_done, _}, 2_000
   end
+  describe "summarize_restarts/1" do
+    test "reports every failure, not just the first" do
+      # reduce_while halted on the first bad compose call, leaving the rest of
+      # the sidecars unrestarted with no record of which.
+      results = [
+        {"valhalla", {:error, 1, "no such service\n"}},
+        {"overpass", {:ok, ""}},
+        {"otp", {:error, 137, "OOMKilled\n"}}
+      ]
+
+      assert {:error, message} = RegionApplier.summarize_restarts(results)
+      assert message =~ "valhalla"
+      assert message =~ "otp"
+      refute message =~ "overpass"
+    end
+
+    test "all good is plain :ok" do
+      assert RegionApplier.summarize_restarts([{"valhalla", {:ok, ""}}]) == :ok
+      assert RegionApplier.summarize_restarts([]) == :ok
+    end
+  end
+
 end
