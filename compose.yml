@@ -79,6 +79,7 @@ services:
       - ./data/osm:/work/data/osm
       - ./data/gtfs:/work/data/gtfs
       - ./data/otp:/work/data/otp
+      - ./data/valhalla:/work/data/valhalla
       - ./data/tiles:/work/data/tiles
     # Match the docker socket's group so the `nobody` user can talk to it.
     # Linux: usually `stat -c %g /var/run/docker.sock` (often 999).
