@@ -795,4 +795,23 @@ defmodule Atlas.Control.ApplyTimelineTest do
     end
   end
 
+  describe "a restart failure sticks" do
+    test "a later log tick does not clear the sidecar's error" do
+      # The old container keeps logging after a failed restart; those ticks must
+      # not turn the row that recorded the failure back to running/done.
+      timeline =
+        start_timeline(["valhalla"])
+        |> restarting(["valhalla"])
+        |> event({:apply_progress, %{phase: :restarting}})
+        |> event({:apply_error, %{phase: :restarting, reason: "docker daemon gone"}})
+
+      assert stage(timeline, :valhalla).state == :error
+
+      later =
+        event(timeline, {:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})})
+
+      assert stage(later, :valhalla).state == :error
+    end
+  end
+
 end

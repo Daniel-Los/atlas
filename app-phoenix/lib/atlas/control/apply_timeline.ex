@@ -394,9 +394,14 @@ defmodule Atlas.Control.ApplyTimeline do
   # this apply" into a green tick.
   defp re_adoptable?(%Stage{state: :skipped, detail: @no_progress}), do: true
   defp re_adoptable?(%Stage{state: :skipped}), do: false
+  # A row that recorded a failed restart stays failed: the old container keeps
+  # logging afterwards, and those ticks describe the process that did NOT get
+  # the new data. Only a fresh apply clears it.
+  defp re_adoptable?(%Stage{state: :error}), do: false
   defp re_adoptable?(_stage), do: true
 
   defp fold_service(%Stage{state: :done} = stage, _snapshot, _now), do: stage
+  defp fold_service(%Stage{state: :error} = stage, _snapshot, _now), do: stage
 
   defp fold_service(stage, %{status: :error} = snapshot, now) do
     %{
