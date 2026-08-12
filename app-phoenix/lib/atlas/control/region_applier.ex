@@ -51,6 +51,7 @@ defmodule Atlas.Control.RegionApplier do
     :osmium_merge,
     :osmium_convert,
     :restart,
+    :enabled?,
     :catalog_find,
     :data_dir,
     current: nil,
@@ -97,6 +98,7 @@ defmodule Atlas.Control.RegionApplier do
       osmium_convert:
         Keyword.get(opts, :osmium_convert, &Atlas.Control.Osmium.convert_to_osm_bz2/3),
       restart: Keyword.get(opts, :restart, &default_restart/1),
+      enabled?: Keyword.get(opts, :enabled?, &default_enabled?/1),
       catalog_find: Keyword.get(opts, :catalog_find, &Atlas.Control.RegionCatalog.find/1),
       data_dir: Keyword.get(opts, :data_dir, "/work/data")
     }
@@ -357,7 +359,11 @@ defmodule Atlas.Control.RegionApplier do
   end
 
   defp stage_otp(state, job_id, osm_dir, gtfs_dir, entries) do
-    progress(state, job_id, :staging, %{region: nil, progress: nil})
+    progress(state, job_id, :staging, %{
+      region: nil,
+      progress: nil,
+      detail: time_zone_detail(entries)
+    })
     otp_dir = Path.join(state.data_dir, "otp")
     File.mkdir_p!(otp_dir)
 
@@ -373,6 +379,16 @@ defmodule Atlas.Control.RegionApplier do
 
       {:error, reason} ->
         {:error, :staging, {:copy, reason}}
+    end
+  end
+
+  # Whether OTP got a time zone is otherwise invisible: an ambiguous set writes
+  # no config and the restriction loss is silent. Say which way it went on the
+  # staging row, where the rest of that stage's work is already reported.
+  defp time_zone_detail(entries) do
+    case OtpBuildConfig.resolve(entries) do
+      {:ok, zone} -> "time zone #{zone}"
+      :ambiguous -> "no time zone — the selected regions span more than one"
     end
   end
 
@@ -406,21 +422,27 @@ defmodule Atlas.Control.RegionApplier do
     end)
   end
 
+  # Filter BEFORE announcing. The timeline builds its sidecar rows from this
+  # broadcast, so naming a service that is switched off hands it a row that can
+  # never start — which the timeline then has to guess about, and guessed wrong
+  # for an enabled service that simply had not logged yet.
   defp restart_services(state, job_id, services) do
     progress(state, job_id, :restarting, %{region: nil, progress: nil})
-    broadcast({:apply_restarting, services})
 
-    case state.restart.(services) do
+    enabled = Enum.filter(services, state.enabled?)
+    broadcast({:apply_restarting, enabled})
+
+    case state.restart.(enabled) do
       :ok -> :ok
       {:error, reason} -> {:error, :restarting, reason}
     end
   end
 
+  defp default_enabled?(name),
+    do: match?(%{enabled?: true}, Atlas.Control.Safe.snapshot(name))
+
   defp default_restart(names) do
     names
-    |> Enum.filter(fn name ->
-      match?(%{enabled?: true}, Atlas.Control.Safe.snapshot(name))
-    end)
     |> Enum.each(&Atlas.Control.DockerCompose.restart/1)
 
     :ok

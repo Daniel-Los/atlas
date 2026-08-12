@@ -74,6 +74,7 @@ defmodule Atlas.Control.RegionApplierTest do
        osmium_merge: osmium_merge,
        osmium_convert: osmium_convert,
        restart: restart,
+       enabled?: Keyword.get(opts, :enabled?, fn _name -> true end),
        catalog_find: fn name -> Map.get(catalog(), name) end}
     )
 
@@ -239,6 +240,19 @@ defmodule Atlas.Control.RegionApplierTest do
     assert RegionApplier.status() == nil
   end
 
+  test "only services that will actually restart are announced", %{tmp: tmp} do
+    # The timeline builds its sidecar rows from this broadcast. Naming a service
+    # that is switched off gives it a row that can never start, which the
+    # timeline then has to guess about.
+    start_applier(tmp, enabled?: fn name -> name != "overpass" end)
+
+    assert {:ok, job_id} = RegionApplier.start(["berlin"])
+    assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+    assert_received {:apply_restarting, ["valhalla", "otp"]}
+    assert_received {:restart, ["valhalla", "otp"]}
+  end
+
   test "staging pins OTP's time zone when the regions agree on one", %{tmp: tmp} do
     start_applier(tmp)
 
@@ -247,6 +261,25 @@ defmodule Atlas.Control.RegionApplierTest do
 
     assert %{"osmDefaults" => %{"timeZone" => "Europe/Berlin"}} =
              tmp |> Path.join("otp/build-config.json") |> File.read!() |> Jason.decode!()
+  end
+
+  test "staging reports which time zone it pinned", %{tmp: tmp} do
+    start_applier(tmp)
+
+    assert {:ok, job_id} = RegionApplier.start(["berlin"])
+    assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+    assert_received {:apply_progress, %{phase: :staging, detail: "time zone Europe/Berlin"}}
+  end
+
+  test "staging says so when no time zone could be pinned", %{tmp: tmp} do
+    start_applier(tmp)
+
+    assert {:ok, job_id} = RegionApplier.start(["berlin", "kent"])
+    assert_receive {:apply_done, %{job_id: ^job_id}}, 2_000
+
+    assert_received {:apply_progress, %{phase: :staging, detail: detail}}
+    assert detail =~ "no time zone"
   end
 
   test "staging writes no build config when the regions disagree", %{tmp: tmp} do
