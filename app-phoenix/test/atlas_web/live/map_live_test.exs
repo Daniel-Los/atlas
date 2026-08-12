@@ -63,6 +63,459 @@ defmodule AtlasWeb.MapLiveTest do
     assert html =~ "Berlin"
   end
 
+  test "an unreachable geocoder says so inside the search panel", %{conn: conn, bypass: bypass} do
+    # The user is looking at the search box, not at a page-wide banner. Silence
+    # there is indistinguishable from "no such place" and from a dead button.
+    Bypass.down(bypass)
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    html =
+      view
+      |> form("form[phx-submit=search]", %{"q" => "berlin"})
+      |> render_submit()
+
+    # Photon is not started in the test env, which is exactly the fresh-instance
+    # case: the copy must name the tool, not say "unavailable".
+    assert html =~ "Photon is not installed"
+    refute html =~ "No results"
+  end
+
+  test "a successful search with no matches says that, not nothing", %{
+    conn: conn,
+    bypass: bypass
+  } do
+    Bypass.expect(bypass, fn c -> Plug.Conn.resp(c, 200, ~s({"features":[]})) end)
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    html =
+      view
+      |> form("form[phx-submit=search]", %{"q" => "asdfqwerzxcv"})
+      |> render_submit()
+
+    assert html =~ "No results"
+    assert html =~ "asdfqwerzxcv"
+    refute html =~ "is not installed"
+  end
+
+  test "the empty search panel stays quiet before anything is searched", %{conn: conn} do
+    {:ok, _view, html} = live(conn, ~p"/")
+
+    refute html =~ "No results"
+    refute html =~ "is not installed"
+  end
+
+  describe "type-as-you-go" do
+    setup %{bypass: bypass} do
+      Bypass.stub(bypass, "GET", "/api", fn c ->
+        Plug.Conn.resp(
+          c,
+          200,
+          ~s({"features":[{"geometry":{"coordinates":[13.4,52.5]},"properties":{"name":"Berlin","city":"Berlin","country":"Germany","osm_id":1,"osm_type":"R","osm_key":"place","osm_value":"city"}}]})
+        )
+      end)
+
+      Bypass.stub(bypass, "GET", "/parser", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      Bypass.stub(bypass, "GET", "/parser/search", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      :ok
+    end
+
+    test "results arrive from typing alone, with no submit", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html =
+        view
+        |> element("form[phx-change=search]")
+        |> render_change(%{"q" => "berlin"})
+
+      assert html =~ "Berlin"
+    end
+
+    test "the input carries a debounce, so each keystroke is not a Photon query", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Scoped to the search input on purpose: the settings tab renders its own
+      # phx-debounce on the same page, so a bare `html =~ "phx-debounce"` passes
+      # whether or not this input has one.
+      assert has_element?(view, ~s(form[phx-change="search"] input[name="q"][phx-debounce]))
+    end
+
+    test "a one-character query is ignored rather than queried", %{conn: conn} do
+      # Photon on a single letter returns noise and costs a round trip per
+      # keystroke. Rails used the same two-character floor.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html =
+        view
+        |> element("form[phx-change=search]")
+        |> render_change(%{"q" => "b"})
+
+      refute html =~ "Berlin"
+      refute html =~ "No results"
+    end
+
+    test "clearing the box drops the results instead of leaving them stale", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert view |> element("form[phx-change=search]") |> render_change(%{"q" => "berlin"}) =~
+               "Berlin"
+
+      refute view |> element("form[phx-change=search]") |> render_change(%{"q" => ""}) =~
+               "Results"
+    end
+  end
+
+  describe "result markers" do
+    setup %{bypass: bypass} do
+      features =
+        1..3
+        |> Enum.map_join(",", fn i ->
+          ~s({"geometry":{"coordinates":[13.#{i},52.#{i}]},"properties":{"name":"P#{i}","city":"Berlin","osm_id":#{i},"osm_type":"N","osm_key":"place","osm_value":"city"}})
+        end)
+
+      Bypass.stub(bypass, "GET", "/api", fn c ->
+        Plug.Conn.resp(c, 200, ~s({"features":[#{features}]}))
+      end)
+
+      Bypass.stub(bypass, "GET", "/parser", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      Bypass.stub(bypass, "GET", "/parser/search", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      :ok
+    end
+
+    defp typed(view, q), do: view |> element("form[phx-change=search]") |> render_change(%{"q" => q})
+
+    test "every result gets a marker, not just the one you click", %{conn: conn} do
+      # This is what made the Rails map useful: you see where all the matches
+      # are before choosing. Marking only the selection leaves the map bare.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      typed(view, "berlin")
+
+      assert_push_event(view, "map:set_results", %{points: points})
+      assert length(points) == 3
+      assert Enum.all?(points, &(is_number(&1.lat) and is_number(&1.lon) and is_binary(&1.label)))
+    end
+
+    test "a search with no matches clears the map", %{conn: conn, bypass: bypass} do
+      Bypass.stub(bypass, "GET", "/api", fn c -> Plug.Conn.resp(c, 200, ~s({"features":[]})) end)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      typed(view, "berlin")
+
+      assert_push_event(view, "map:set_results", %{points: []})
+    end
+
+    test "an unreachable geocoder clears the map rather than stranding old pins", %{
+      conn: conn,
+      bypass: bypass
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+      typed(view, "berlin")
+      assert_push_event(view, "map:set_results", %{points: [_ | _]})
+
+      Bypass.down(bypass)
+      typed(view, "berlin again")
+
+      assert_push_event(view, "map:set_results", %{points: []})
+    end
+
+    test "selecting a result narrows the map to that one", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      typed(view, "berlin")
+      assert_push_event(view, "map:set_results", %{points: [first | _]})
+
+      view |> element(~s(#search-results button[phx-value-id="N:1"])) |> render_click()
+
+      assert_push_event(view, "map:set_results", %{points: [only]})
+      assert only.label == first.label
+    end
+
+    test "selecting puts the label in the box and dismisses the list", %{conn: conn} do
+      # Rails did both on commit; leaving the list open under a chosen result
+      # makes the next keystroke ambiguous.
+      {:ok, view, _html} = live(conn, ~p"/")
+      typed(view, "berlin")
+
+      html = view |> element(~s(#search-results button[phx-value-id="N:1"])) |> render_click()
+
+      refute html =~ "search-results"
+      refute html =~ "No results"
+      assert html =~ ~s(value="P1, Berlin")
+    end
+  end
+
+  describe "the query lives in the URL" do
+    setup %{bypass: bypass} do
+      Bypass.stub(bypass, "GET", "/api", fn c ->
+        Plug.Conn.resp(
+          c,
+          200,
+          ~s({"features":[{"geometry":{"coordinates":[13.4,52.5]},"properties":{"name":"Berlin","city":"Berlin","osm_id":1,"osm_type":"N","osm_key":"place","osm_value":"city"}}]})
+        )
+      end)
+
+      Bypass.stub(bypass, "GET", "/parser", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      Bypass.stub(bypass, "GET", "/parser/search", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      :ok
+    end
+
+    test "visiting a search URL runs the search", %{conn: conn} do
+      # A shared link has to reproduce what the sender saw, not an empty box.
+      {:ok, _view, html} = live(conn, ~p"/?q=berlin")
+
+      assert html =~ "Berlin"
+      assert html =~ ~s(value="berlin")
+    end
+
+    test "visiting a search URL marks the map too", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/?q=berlin")
+
+      assert_push_event(view, "map:set_results", %{points: [_ | _]})
+    end
+
+    test "typing writes the query into the URL", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view |> element("form[phx-change=search]") |> render_change(%{"q" => "berlin"})
+
+      assert_patch(view, "/?q=berlin")
+    end
+
+    test "clearing the box drops the parameter rather than leaving q=", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/?q=berlin")
+
+      view |> element("form[phx-change=search]") |> render_change(%{"q" => ""})
+
+      assert_patch(view, "/")
+    end
+
+    test "a query below the minimum is still reflected, but not searched", %{conn: conn} do
+      # The box shows "b", so the URL should too — but Photon is never asked.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = view |> element("form[phx-change=search]") |> render_change(%{"q" => "b"})
+
+      assert_patch(view, "/?q=b")
+      refute html =~ "Berlin"
+    end
+
+    test "other query parameters survive a search", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/?tab=settings")
+
+      view |> element("form[phx-change=search]") |> render_change(%{"q" => "berlin"})
+
+      path = assert_patch(view)
+      assert path =~ "q=berlin"
+      assert path =~ "tab=settings"
+    end
+
+    test "picking a result puts its label in the URL", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/?q=berlin")
+
+      view |> element(~s(#search-results button[phx-value-id="N:1"])) |> render_click()
+
+      assert_patch(view, "/?q=Berlin")
+    end
+
+    test "an unchanged query does not re-run the search", %{conn: conn} do
+      # push_patch feeds handle_params, so a naive implementation searches twice
+      # for every keystroke.
+      {:ok, view, _html} = live(conn, ~p"/?q=berlin")
+      assert_push_event(view, "map:set_results", %{points: [_ | _]})
+
+      send(view.pid, {:noop, nil})
+      refute_push_event(view, "map:set_results", %{points: [_ | _]})
+    end
+  end
+
+  describe "keyboard navigation" do
+    setup %{bypass: bypass} do
+      features =
+        1..3
+        |> Enum.map_join(",", fn i ->
+          ~s({"geometry":{"coordinates":[13.#{i},52.#{i}]},"properties":{"name":"P#{i}","city":"Berlin","osm_id":#{i},"osm_type":"N","osm_key":"place","osm_value":"city"}})
+        end)
+
+      Bypass.stub(bypass, "GET", "/api", fn c ->
+        Plug.Conn.resp(c, 200, ~s({"features":[#{features}]}))
+      end)
+
+      Bypass.stub(bypass, "GET", "/parser", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      Bypass.stub(bypass, "GET", "/parser/search", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      :ok
+    end
+
+    defp search(view, q) do
+      view |> element("form[phx-change=search]") |> render_change(%{"q" => q})
+      view
+    end
+
+    defp active_index(view) do
+      view
+      |> render()
+      |> then(&Regex.scan(~r/data-active="(true|false)"/, &1))
+      |> Enum.map(&List.last/1)
+      |> Enum.find_index(&(&1 == "true"))
+    end
+
+    test "nothing is highlighted until an arrow key is pressed", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert active_index(search(view, "berlin")) == nil
+    end
+
+    test "arrow down walks forward through the results", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+
+      render_hook(view, "search_move", %{"dir" => 1})
+      assert active_index(view) == 0
+
+      render_hook(view, "search_move", %{"dir" => 1})
+      assert active_index(view) == 1
+    end
+
+    test "arrow up from nothing wraps to the last result", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+
+      render_hook(view, "search_move", %{"dir" => -1})
+      assert active_index(view) == 2
+    end
+
+    test "walking past the end wraps to the start", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+
+      for _ <- 1..3, do: render_hook(view, "search_move", %{"dir" => 1})
+      assert active_index(view) == 2
+
+      render_hook(view, "search_move", %{"dir" => 1})
+      assert active_index(view) == 0
+    end
+
+    test "enter flies to the highlighted result", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+
+      render_hook(view, "search_move", %{"dir" => 1})
+      render_hook(view, "search_commit", %{})
+
+      assert_push_event(view, "map:fly_to", %{lat: _, lon: _})
+    end
+
+    test "enter with nothing highlighted flies nowhere", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+
+      render_hook(view, "search_commit", %{})
+
+      refute_push_event(view, "map:fly_to", %{})
+    end
+
+    test "escape dismisses the list", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+
+      render_hook(view, "search_dismiss", %{})
+
+      refute render(view) =~ "data-active"
+    end
+
+    test "a fresh search clears any previous highlight", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view = search(view, "berlin")
+
+      render_hook(view, "search_move", %{"dir" => 1})
+      assert active_index(view) == 0
+
+      assert active_index(search(view, "berlin2")) == nil
+    end
+  end
+
+  describe "viewport scoping" do
+    setup %{bypass: bypass} do
+      test_pid = self()
+
+      Bypass.stub(bypass, "GET", "/api", fn c ->
+        c = Plug.Conn.fetch_query_params(c)
+        send(test_pid, {:photon_params, c.query_params})
+
+        Plug.Conn.resp(
+          c,
+          200,
+          ~s({"features":[{"geometry":{"coordinates":[13.4,52.5]},"properties":{"name":"Berlin","osm_id":1,"osm_type":"N","osm_key":"place","osm_value":"city"}}]})
+        )
+      end)
+
+      Bypass.stub(bypass, "GET", "/parser", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      Bypass.stub(bypass, "GET", "/parser/search", fn c -> Plug.Conn.resp(c, 200, "[]") end)
+      :ok
+    end
+
+    defp change(view, q), do: view |> element("form[phx-change=search]") |> render_change(%{"q" => q})
+
+    test "asks for a viewport-sized page, not the old global handful", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      change(view, "berlin")
+
+      assert_receive {:photon_params, %{"limit" => "40"}}
+    end
+
+    test "sends no bbox before the map has reported one", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      change(view, "berlin")
+
+      assert_receive {:photon_params, params}
+      refute Map.has_key?(params, "bbox")
+    end
+
+    test "scopes to the reported viewport once the map has moved", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "viewport_changed", %{"bbox" => [13.0, 52.3, 13.8, 52.7]})
+      change(view, "berlin")
+
+      assert_receive {:photon_params, %{"bbox" => "13.0,52.3,13.8,52.7"}}
+    end
+
+    test "panning re-runs the active query against the new bounds", %{conn: conn} do
+      # This is the whole point: a brand search must answer "which of these can
+      # I see", so moving the map has to re-ask rather than keep stale hits.
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      change(view, "mcdonalds")
+      assert_receive {:photon_params, _first}
+
+      render_hook(view, "viewport_changed", %{"bbox" => [9.9, 53.4, 10.1, 53.6]})
+
+      assert_receive {:photon_params, %{"bbox" => "9.9,53.4,10.1,53.6", "q" => "mcdonalds"}}
+    end
+
+    test "a viewport refresh re-marks the map from the refreshed results", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      change(view, "berlin")
+      assert_receive {:photon_params, _}
+      assert_push_event(view, "map:set_results", %{points: [_ | _]})
+
+      render_hook(view, "viewport_changed", %{"bbox" => [13.0, 52.3, 13.8, 52.7]})
+      assert_receive {:photon_params, _}
+
+      assert_push_event(view, "map:set_results", %{points: [_ | _]})
+    end
+
+    test "panning with no active query does not query Photon at all", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "viewport_changed", %{"bbox" => [9.9, 53.4, 10.1, 53.6]})
+
+      refute_receive {:photon_params, _}, 200
+    end
+  end
+
   test "status_changed handler does not crash the LiveView", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 

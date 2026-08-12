@@ -12,6 +12,9 @@ defmodule AtlasWeb.SidePanel do
   attr :active_tab, :string, required: true
   attr :search_query, :string, required: true
   attr :search_results, :list, required: true
+  attr :search_status, :string, default: "ok"
+  attr :search_active, :integer, default: -1
+  attr :search_searched, :boolean, default: false
   attr :directions, :any, required: true
   attr :mode, :string, required: true
   attr :route_from, :string, default: ""
@@ -60,6 +63,11 @@ defmodule AtlasWeb.SidePanel do
               id="search-card"
               query={@search_query}
               results={@search_results}
+              status={@search_status}
+              service="photon"
+              snapshot={@service_status["photon"]}
+              active={@search_active}
+              searched={@search_searched}
             />
           </div>
           <div class={tab_visible_class(@active_tab, "route")}>

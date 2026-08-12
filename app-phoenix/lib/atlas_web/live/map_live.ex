@@ -4,6 +4,7 @@ defmodule AtlasWeb.MapLive do
   alias Atlas.Geometry.Coord
   alias Atlas.Maps
   alias Atlas.Settings
+  alias AtlasWeb.SearchMarkers
 
   alias Atlas.Control.{
     ApplyTimeline,
@@ -50,7 +51,12 @@ defmodule AtlasWeb.MapLive do
        apply_status: Safe.call(fn -> RegionApplier.status() end, nil),
        timeline: Safe.call(fn -> ApplyTimeline.current() end, nil),
        service_logs: nil,
-       upstream_status: "ok"
+       upstream_status: "ok",
+       search_status: "ok",
+       search_active: -1,
+       search_searched: false,
+       url_params: %{},
+       viewport: nil
      )}
   end
 
@@ -60,62 +66,55 @@ defmodule AtlasWeb.MapLive do
     {:noreply, assign(socket, active_tab: tab)}
   end
 
+  # The URL is the single source of truth for the query: the event patches it,
+  # `handle_params/3` runs the search. One path serves typing, a shared link and
+  # the back button alike, instead of three that can disagree.
   @impl true
   def handle_event("search", %{"q" => q}, socket) do
-    trimmed = String.trim(q)
+    {:noreply, push_patch(socket, to: search_path(socket, q), replace: true)}
+  end
 
-    if trimmed == "" do
-      {:noreply, assign(socket, search_query: q, search_results: [])}
+  # The map reports its viewport after every pan/zoom. Re-running the active
+  # query against the new bounds is what makes a brand search ("McDonald's")
+  # answer "which ones can I see" instead of "the global top N".
+  def handle_event("viewport_changed", %{"bbox" => [_w, _s, _e, _n] = bbox}, socket) do
+    socket = assign(socket, viewport: bbox)
+
+    if searchable?(socket.assigns.search_query) do
+      {:noreply, run_search(socket, socket.assigns.search_query)}
     else
-      case Maps.Search.autocomplete(%{
-             query: trimmed,
-             limit: 8,
-             lang: nil,
-             lat: nil,
-             lon: nil,
-             bbox: nil
-           }) do
-        {:ok, result} ->
-          {:noreply,
-           socket
-           |> assign(
-             search_query: q,
-             search_results: result.features,
-             upstream_status: result.upstream_status
-           )
-           |> push_event("map:clear_markers", %{})}
-
-        {:error, _e} ->
-          {:noreply,
-           socket
-           |> assign(
-             search_query: q,
-             search_results: [],
-             upstream_status: "unavailable"
-           )
-           |> push_event("map:clear_markers", %{})}
-      end
+      {:noreply, socket}
     end
+  end
+
+  def handle_event("search_move", %{"dir" => dir}, socket) when dir in [1, -1] do
+    count = length(socket.assigns.search_results)
+
+    {:noreply, assign(socket, search_active: move_active(socket.assigns.search_active, dir, count))}
+  end
+
+  def handle_event("search_commit", _params, socket) do
+    # The index guard is load-bearing: `Enum.at(list, -1)` returns the LAST
+    # element, so without it Enter with nothing highlighted would fly to the
+    # bottom result instead of doing nothing.
+    with true <- socket.assigns.search_active >= 0,
+         feature when not is_nil(feature) <-
+           Enum.at(socket.assigns.search_results, socket.assigns.search_active) do
+      {:noreply, select_feature(socket, feature)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("search_dismiss", _params, socket) do
+    {:noreply, assign(socket, search_results: [], search_active: -1)}
   end
 
   @impl true
   def handle_event("select_result", %{"id" => id}, socket) do
     case Enum.find(socket.assigns.search_results, &(&1.id == id)) do
-      nil ->
-        {:noreply, socket}
-
-      feature ->
-        coords = feature.coords
-
-        {:noreply,
-         socket
-         |> push_event("map:fly_to", %{lat: coords.lat, lon: coords.lon, zoom: 14})
-         |> push_event("map:add_marker", %{
-           id: feature.id,
-           lat: coords.lat,
-           lon: coords.lon,
-           label: feature.label
-         })}
+      nil -> {:noreply, socket}
+      feature -> {:noreply, select_feature(socket, feature)}
     end
   end
 
@@ -412,6 +411,18 @@ defmodule AtlasWeb.MapLive do
   end
 
   @impl true
+  def handle_params(params, _uri, socket) do
+    socket = assign(socket, url_params: Map.drop(params, ["q"]))
+    q = Map.get(params, "q", "")
+
+    if q == socket.assigns.search_query do
+      {:noreply, socket}
+    else
+      {:noreply, run_search(socket, q)}
+    end
+  end
+
+  @impl true
   def handle_info(:status_changed, socket) do
     {:noreply, assign(socket, service_status: refresh_service_status())}
   end
@@ -503,6 +514,111 @@ defmodule AtlasWeb.MapLive do
 
   def handle_info(_other, socket), do: {:noreply, socket}
 
+  # Rails used the same two-character floor: one letter matches most of the
+  # planet, so it costs a Photon round trip per keystroke to return noise.
+  @min_query_length 2
+
+  # 40, not 8: the list is scoped to the viewport, so a brand search wants every
+  # visible branch rather than the global top handful.
+  @search_limit 40
+
+  # Keeps whatever else is in the URL (a `tab`, say) and drops `q` entirely when
+  # the box is empty, so a cleared search leaves `/` rather than `/?q=`.
+  defp search_path(socket, q) do
+    params =
+      socket.assigns
+      |> Map.get(:url_params, %{})
+      |> then(fn p -> if String.trim(q) == "", do: p, else: Map.put(p, "q", q) end)
+
+    if params == %{}, do: ~p"/", else: ~p"/?#{params}"
+  end
+
+  defp searchable?(q) when is_binary(q), do: String.length(String.trim(q)) >= @min_query_length
+  defp searchable?(_), do: false
+
+  defp run_search(socket, q) do
+    if searchable?(q) do
+      dispatch_search(socket, q)
+    else
+      assign(socket,
+        search_query: q,
+        search_results: [],
+        search_active: -1,
+        search_searched: false
+      )
+    end
+  end
+
+  defp dispatch_search(socket, q) do
+    params = %{
+      query: String.trim(q),
+      limit: @search_limit,
+      lang: nil,
+      lat: nil,
+      lon: nil,
+      bbox: socket.assigns.viewport
+    }
+
+    case Maps.Search.autocomplete(params) do
+      {:ok, result} ->
+        socket
+        |> assign(
+          search_query: q,
+          search_results: result.features,
+          search_status: result.upstream_status,
+          upstream_status: result.upstream_status,
+          search_active: -1,
+          search_searched: true
+        )
+        |> push_results(result.features)
+
+      {:error, _e} ->
+        socket
+        |> assign(
+          search_query: q,
+          search_results: [],
+          search_status: "unavailable",
+          upstream_status: "unavailable",
+          search_active: -1,
+          search_searched: true
+        )
+        |> push_results([])
+    end
+  end
+
+  # One event replaces the whole marker set, mirroring the Rails map: every
+  # result is a pin, so you can see where the matches are before choosing one.
+  # Replacing wholesale also removes the clear-then-add ordering that let a
+  # pan-triggered refresh wipe the pin a user had just dropped.
+  defp push_results(socket, features) do
+    push_event(socket, "map:set_results", %{points: SearchMarkers.points(features)})
+  end
+
+  defp select_feature(socket, feature) do
+    coords = feature.coords
+
+    socket
+    |> assign(
+      search_query: feature.label || "",
+      search_results: [],
+      search_active: -1,
+      # Not `searched: true` with an empty list: the list is dismissed, not
+      # empty, and the panel must not answer a chosen result with "No results".
+      search_searched: false
+    )
+    |> push_event("map:fly_to", %{lat: coords.lat, lon: coords.lon, zoom: 14})
+    |> push_results([feature])
+    |> then(&push_patch(&1, to: search_path(&1, feature.label || ""), replace: true))
+  end
+
+  # Wraps at both ends, matching the Rails list. `-1` means "nothing highlighted"
+  # and needs its own clauses rather than arithmetic: `Integer.mod(-1 + -1, 3)`
+  # is 1, but ArrowUp from nothing must land on the last row.
+  defp move_active(_current, _dir, 0), do: -1
+  defp move_active(-1, 1, _count), do: 0
+  defp move_active(-1, -1, count), do: count - 1
+  defp move_active(current, dir, count), do: Integer.mod(current + dir, count)
+
   defp refresh_service_status do
     Seeder.known_services()
     |> Enum.map(fn s -> {s.name, Safe.snapshot(s.name)} end)
@@ -550,6 +666,9 @@ defmodule AtlasWeb.MapLive do
         active_tab={@active_tab}
         search_query={@search_query}
         search_results={@search_results}
+        search_status={@search_status}
+        search_active={@search_active}
+        search_searched={@search_searched}
         directions={@directions}
         mode={@mode}
         route_from={@route_from}

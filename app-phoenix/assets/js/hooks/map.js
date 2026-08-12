@@ -40,24 +40,47 @@ export default {
       maxWidth: 120,
       unit: "metric"
     }), "bottom-left")
-    this.markers = {}
+    this.resultMarkers = []
+
+    this.clearResultMarkers = () => {
+      this.resultMarkers.forEach((m) => m.remove())
+      this.resultMarkers = []
+    }
+
+    // Report the viewport after every pan/zoom so the server can scope search
+    // to what is on screen. `moveend` (not `move`) keeps this to one message
+    // per gesture rather than one per frame.
+    this.reportViewport = () => {
+      const b = this.map.getBounds()
+      this.pushEvent("viewport_changed", {
+        bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
+      })
+    }
+    this.map.on("moveend", this.reportViewport)
+    this.map.once("load", this.reportViewport)
 
     this.handleEvent("map:fly_to", ({ lat, lon, zoom }) => {
       this.map.flyTo({ center: [lon, lat], zoom: zoom || 14 })
     })
 
-    this.handleEvent("map:add_marker", ({ id, lat, lon, label }) => {
-      const marker = new maplibregl.Marker()
-        .setLngLat([lon, lat])
-        .setPopup(new maplibregl.Popup().setHTML(`<strong>${label}</strong>`))
-        .addTo(this.map)
-      this.markers[id] = marker
+    // One event owns the whole result-marker set. Replacing wholesale (rather
+    // than clear + add) means a pan-triggered refresh cannot race a selection
+    // and leave the map bare.
+    this.handleEvent("map:set_results", ({ points }) => {
+      this.clearResultMarkers()
+
+      ;(points || []).forEach((p) => {
+        const marker = new maplibregl.Marker({ element: resultPin(p.label) })
+          .setLngLat([p.lon, p.lat])
+          .setPopup(
+            new maplibregl.Popup({ offset: 14, maxWidth: "320px", className: "apo-poi-popup" })
+              .setHTML(resultPopupHTML(p))
+          )
+          .addTo(this.map)
+        this.resultMarkers.push(marker)
+      })
     })
 
-    this.handleEvent("map:clear_markers", () => {
-      Object.values(this.markers).forEach(m => m.remove())
-      this.markers = {}
-    })
 
     this.routeGeoJSON = null
 
@@ -101,29 +124,27 @@ export default {
       this._tilesUrl = url || null
       const nextStyle = url ? url : OSM_RASTER_FALLBACK
 
-      // Persist what we want to re-add on the new style.
-      const savedMarkers = Object.entries(this.markers || {}).map(([id, m]) => {
+      // Persist what we want to re-add on the new style. A style swap destroys
+      // marker DOM, so the set has to be rebuilt rather than left dangling.
+      const savedMarkers = this.resultMarkers.map((m) => {
         const lngLat = m.getLngLat()
         const popup = m.getPopup()
-        return {
-          id,
-          lat: lngLat.lat,
-          lon: lngLat.lng,
-          html: popup ? popup.getElement()?.querySelector(".maplibregl-popup-content")?.innerHTML : null
-        }
+        return { lat: lngLat.lat, lon: lngLat.lng, text: popup ? popup.getElement()?.textContent : null }
       })
 
-      // Drop the live marker DOM; we re-create after styledata fires.
-      Object.values(this.markers || {}).forEach(m => m.remove())
-      this.markers = {}
+      this.clearResultMarkers()
 
       const onStyle = () => {
-        // Re-add markers.
-        savedMarkers.forEach(({ id, lat, lon, html }) => {
-          const marker = new maplibregl.Marker().setLngLat([lon, lat])
-          if (html) marker.setPopup(new maplibregl.Popup().setHTML(html))
+        // The accent is re-read here on purpose: a style swap usually rides
+        // along with a light/dark change, which moves --color-accent.
+        const accent = getComputedStyle(document.documentElement)
+          .getPropertyValue("--color-accent").trim() || "#B86A3A"
+
+        savedMarkers.forEach(({ lat, lon, text }) => {
+          const marker = new maplibregl.Marker({ color: accent }).setLngLat([lon, lat])
+          if (text) marker.setPopup(new maplibregl.Popup({ offset: 16 }).setText(text))
           marker.addTo(this.map)
-          this.markers[id] = marker
+          this.resultMarkers.push(marker)
         })
         // Re-add the route source/layer if we had one.
         if (this.routeGeoJSON) this._renderRoute()
@@ -163,4 +184,69 @@ export default {
   destroyed() {
     if (this.map) this.map.remove()
   }
+}
+
+// A search pin, styled like the Rails POI marker: an accent dot that reacts to
+// the cursor. MapLibre's default marker has no hover affordance at all, so
+// nothing told you a pin could be clicked.
+function resultPin(label) {
+  // Two elements on purpose: MapLibre positions a marker by writing
+  // `transform: translate(...)` onto the element it is given, so any hover
+  // transform there would replace the translate and fling the pin to the map
+  // origin. The outer div stays MapLibre's; the inner dot is ours to animate.
+  const el = document.createElement("div")
+  el.className = "apo-poi-marker"
+  el.title = label || ""
+
+  const dot = document.createElement("span")
+  dot.className = "apo-poi-marker-dot"
+  el.appendChild(dot)
+
+  return el
+}
+
+function escapeAttr(value) {
+  return String(value == null ? "" : value).replace(/"/g, "&quot;").replace(/</g, "&lt;")
+}
+
+function escapeText(value) {
+  const div = document.createElement("div")
+  div.textContent = value == null ? "" : String(value)
+  return div.innerHTML
+}
+
+// A search result knows less than an Overpass POI: Photon returns no tag block,
+// so there are no opening hours, phone or website rows to show. The popup lists
+// what this result actually carries and omits the rest, rather than rendering a
+// scaffold of empty fields.
+function infoRow(value) {
+  return `<div class="apo-popup-row"><span class="apo-popup-row-value">${escapeText(value)}</span></div>`
+}
+
+function resultPopupHTML(p) {
+  const rows = []
+  if (p.address) rows.push(infoRow(p.address))
+  if (p.region) rows.push(infoRow(p.region))
+  rows.push(infoRow(`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`))
+
+  const footer = p.osm_url
+    ? `<footer class="apo-popup-actions">
+         <a class="apo-popup-secondary" target="_blank" rel="noopener" href="${escapeAttr(p.osm_url)}">
+           <span>View on OpenStreetMap</span>
+         </a>
+       </footer>`
+    : ""
+
+  return `
+    <div class="apo-popup">
+      <header class="apo-popup-header">
+        <div class="apo-popup-name">${escapeText(p.label)}</div>
+        <div class="apo-popup-meta">
+          <span class="apo-popup-category">${escapeText(p.category)}</span>
+        </div>
+      </header>
+      <div class="apo-popup-rows">${rows.join("")}</div>
+      ${footer}
+    </div>
+  `
 }

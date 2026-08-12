@@ -57,6 +57,27 @@ defmodule Atlas.Control.ServiceFormatting do
   def running?(%{status: :ready}), do: true
   def running?(_), do: false
 
+  @doc """
+  Why a feature backed by this service cannot answer right now — or `nil` when
+  it can.
+
+    * `:not_installed` — never observed, or switched off. A user cannot fix
+      "unavailable"; they can act on "it was never turned on".
+    * `:installing` — enabled and still downloading/building its dataset.
+    * `:failing` — enabled and up, but not answering.
+
+  `nil` reads as `:not_installed`, matching `status_label/1`: a service that has
+  never been observed is off, not mysterious.
+  """
+  def unavailable_reason(snapshot) do
+    cond do
+      not enabled?(snapshot) -> :not_installed
+      installing?(snapshot) -> :installing
+      running?(snapshot) -> nil
+      true -> :failing
+    end
+  end
+
   @doc "Integer percent (0–100) for a snapshot's install progress."
   def progress_pct(%{progress: p}) when is_number(p), do: p |> Kernel.*(100) |> round() |> min(100) |> max(0)
   def progress_pct(_), do: 0
