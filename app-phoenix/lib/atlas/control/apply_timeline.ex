@@ -134,6 +134,12 @@ defmodule Atlas.Control.ApplyTimeline do
   # the timeline only observes the exclusion, so it says only that.
   @not_restarted "not restarted by this apply"
 
+  # The other way a sidecar row reaches `:skipped`: it WAS restarted but had
+  # logged nothing by the time the applier finished. That is a guess, and a
+  # later tick disproves it — unlike @not_restarted, which is an observed fact
+  # and must never be adopted back.
+  @no_progress "no progress reported"
+
   use GenServer
 
   @topic "control:timeline"
@@ -288,11 +294,31 @@ defmodule Atlas.Control.ApplyTimeline do
     |> maybe_finish(now)
   end
 
+  # A restart that failed did not break the applier's work — every applier stage
+  # had already completed when `:restarting` was announced. It broke the
+  # sidecars, which never received the new data, so the error belongs on their
+  # rows. Blaming `:convert` reported a conversion failure for a conversion that
+  # succeeded.
+  def apply_event(timeline, {:apply_error, %{phase: :restarting} = payload}, now) do
+    message = to_message(payload[:reason])
+
+    stages =
+      Enum.map(timeline.stages, fn stage ->
+        if sidecar?(stage.key) and stage.state not in [:done, :skipped] do
+          %{stage | state: :error, error: message, finished_at: now}
+        else
+          stage
+        end
+      end)
+
+    timeline
+    |> Map.put(:stages, stages)
+    |> Map.put(:status, :error)
+    |> Map.put(:finished_at, now)
+  end
+
   def apply_event(timeline, {:apply_error, %{phase: phase} = payload}, now) do
-    # A phase with no stage of its own (`:restarting`) errors the last applier
-    # stage rather than defaulting onto `:convert`, which would report a
-    # conversion failure for a conversion that succeeded.
-    key = Map.get(@phase_stage, phase, last_applier_stage(timeline))
+    key = Map.get(@phase_stage, phase, :convert)
 
     timeline
     |> complete_stages_before(key, now)
@@ -357,8 +383,18 @@ defmodule Atlas.Control.ApplyTimeline do
   # must be allowed to correct itself rather than sit at "disabled" while it
   # ingests for hours.
   defp adopted?(timeline, key) do
-    Enum.any?(timeline.stages, &(&1.key == key and &1.state != :pending))
+    Enum.any?(timeline.stages, fn stage ->
+      stage.key == key and (stage.state != :pending and re_adoptable?(stage))
+    end)
   end
+
+  # `:skipped` is re-adoptable only when it came from `settle_unstarted/2`.
+  # A service the applier deliberately excluded keeps its row read-only: a tick
+  # from the still-running old container would otherwise turn "not restarted by
+  # this apply" into a green tick.
+  defp re_adoptable?(%Stage{state: :skipped, detail: @no_progress}), do: true
+  defp re_adoptable?(%Stage{state: :skipped}), do: false
+  defp re_adoptable?(_stage), do: true
 
   defp fold_service(%Stage{state: :done} = stage, _snapshot, _now), do: stage
 
@@ -535,7 +571,7 @@ defmodule Atlas.Control.ApplyTimeline do
       # Deliberately not "service is disabled": the applier now announces only
       # the services it actually restarts, so a row with no tick means we never
       # heard from it, not that we know it is off.
-      %{stage | state: :skipped, detail: "no progress reported", finished_at: now}
+      %{stage | state: :skipped, detail: @no_progress, finished_at: now}
     else
       stage
     end
@@ -547,20 +583,6 @@ defmodule Atlas.Control.ApplyTimeline do
     do: sidecar?(key) and not is_nil(started_at)
 
   defp still_ingesting?(_stage), do: false
-
-  # The furthest applier stage that ran, so an error outside the mapped phases
-  # lands on work that actually happened.
-  defp last_applier_stage(timeline) do
-    applier_keys = Enum.map(@applier_stages, &elem(&1, 0))
-
-    timeline.stages
-    |> Enum.filter(&(&1.key in applier_keys and &1.state in [:running, :done]))
-    |> List.last()
-    |> case do
-      nil -> :download
-      stage -> stage.key
-    end
-  end
 
   # A stage can report a decision it made — which time zone OTP was pinned to,
   # or that the regions disagreed and none was. Absent detail leaves whatever

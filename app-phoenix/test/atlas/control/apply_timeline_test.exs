@@ -751,4 +751,48 @@ defmodule Atlas.Control.ApplyTimelineTest do
     end
   end
 
+  describe "skip reasons are not interchangeable" do
+    test "a service the applier excluded is not adopted by a stray tick" do
+      # Overpass is excluded when its source failed to convert. A tick from the
+      # still-running old container must not turn that row green.
+      timeline =
+        start_timeline(["valhalla", "overpass"])
+        |> restarting(["valhalla"])
+
+      excluded = stage(timeline, :overpass)
+      assert excluded.state == :skipped
+
+      after_tick =
+        event(timeline, {:service_update, snapshot("overpass", %{phase: "ready", ready?: true})})
+
+      assert stage(after_tick, :overpass).state == :skipped
+    end
+  end
+
+  describe "a failed restart" do
+    test "does not blame an applier stage that finished" do
+      # The real order: :restarting progress completes every applier stage, THEN
+      # the error arrives. Without that first event the test proves nothing.
+      timeline =
+        start_timeline(["valhalla"])
+        |> restarting(["valhalla"])
+        |> event({:apply_progress, %{phase: :restarting}})
+        |> event({:apply_error, %{phase: :restarting, reason: "docker daemon gone"}})
+
+      refute stage(timeline, :convert).state == :error
+      assert stage(timeline, :convert).state == :done
+    end
+
+    test "reports itself on the sidecars that never got restarted" do
+      timeline =
+        start_timeline(["valhalla"])
+        |> restarting(["valhalla"])
+        |> event({:apply_progress, %{phase: :restarting}})
+        |> event({:apply_error, %{phase: :restarting, reason: "docker daemon gone"}})
+
+      assert stage(timeline, :valhalla).state == :error
+      assert stage(timeline, :valhalla).error =~ "docker daemon gone"
+    end
+  end
+
 end
