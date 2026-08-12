@@ -190,6 +190,17 @@ assert_contains "keeps the socket's own group" "$RUN_CALLS" "--groups=0"
 assert_not_contains "does not drop every group" "$RUN_CALLS" "--clear-groups"
 teardown_sandbox
 
+printf '\n== a wrong DOCKER_GID does not mask the real socket group ==\n'
+# compose.yml exports `DOCKER_GID: ${DOCKER_GID:-999}` into the app container,
+# so the variable IS set for every self-hoster who did not override it. If that
+# value wins, the default 999 is granted on a macOS host whose socket is gid 0
+# and the control plane stays degraded — the exact bug this is meant to fix.
+setup_sandbox 0 "0"
+SOCKET_GID=0
+run_entrypoint env DOCKER_GID=999
+assert_contains "grants the real socket group, not the DOCKER_GID default" "$RUN_CALLS" "--groups=0"
+teardown_sandbox
+
 printf '\n== a non-zero socket group (Linux) is preserved too ==\n'
 setup_sandbox 0 "0 999"
 SOCKET_GID=999

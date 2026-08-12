@@ -91,16 +91,34 @@ if [ "$(id -u)" = "0" ]; then
   fi
 
   # Which group owns the socket decides whether the control plane works at all,
-  # so read it FROM THE SOCKET rather than from DOCKER_GID. compose substitutes
-  # DOCKER_GID into `group_add:` at the compose level and never exports it into
-  # the container, so the variable is unset here no matter what the operator
-  # put in .env. On macOS (OrbStack / Docker Desktop) the socket is gid 0 —
-  # precisely what the strip below removes — which left the dropped process
-  # with no route to the daemon and a "Docker socket unreachable" banner.
-  socket_gid="${DOCKER_GID:-}"
+  # so read it FROM THE SOCKET. DOCKER_GID cannot be trusted as the answer:
+  # compose.yml exports `DOCKER_GID: ${DOCKER_GID:-999}` into the container, so
+  # it is *always* set — to 999 for anyone who did not override it — while the
+  # socket on macOS (OrbStack / Docker Desktop) is gid 0. Preferring the
+  # variable therefore grants a group the daemon does not answer on, which is
+  # the "Docker socket unreachable" banner this exists to prevent.
+  #
+  # DOCKER_GID is still honoured, as an ADDITIONAL group rather than a
+  # replacement: it is the only lever an operator has when the socket is not
+  # visible from here (a proxied or TCP daemon), and granting both costs
+  # nothing when they agree.
+  socket_gid=""
 
-  if [ -z "$socket_gid" ] && [ -e "$DOCKER_SOCKET" ]; then
+  if [ -e "$DOCKER_SOCKET" ]; then
     socket_gid="$(stat -c %g "$DOCKER_SOCKET" 2>/dev/null || echo "")"
+  fi
+
+  # DOCKER_GID first, socket gid last: the loop below PREPENDS, so this leaves
+  # the socket's own group at the head of --groups where it is easiest to read
+  # in a failure report.
+  extra_gids=""
+
+  if [ -n "${DOCKER_GID:-}" ] && [ "${DOCKER_GID}" != "$socket_gid" ]; then
+    extra_gids="${DOCKER_GID}"
+  fi
+
+  if [ -n "$socket_gid" ]; then
+    extra_gids="$(printf '%s\n%s' "$extra_gids" "$socket_gid" | grep -v '^$' | paste -sd, -)"
   fi
 
   # Carry that group across the drop, but not root's own gid 0 otherwise —
@@ -108,12 +126,15 @@ if [ "$(id -u)" = "0" ]; then
   # access for its whole lifetime.
   groups="$(id -G | tr ' ' '\n' | grep -vx 0 | grep -vx "$PGID" | paste -sd, -)"
 
-  if [ -n "$socket_gid" ] && [ "$socket_gid" != "$PGID" ]; then
+  for gid in $(printf '%s' "$extra_gids" | tr ',' ' '); do
+    [ -n "$gid" ] || continue
+    [ "$gid" = "$PGID" ] && continue
+
     case ",$groups," in
-      *",$socket_gid,"*) ;;
-      *) groups="$(printf '%s,%s' "$socket_gid" "$groups" | sed 's/,$//')" ;;
+      *",$gid,"*) ;;
+      *) groups="$(printf '%s,%s' "$gid" "$groups" | sed 's/,$//')" ;;
     esac
-  fi
+  done
 
   if [ -n "$groups" ]; then
     group_args="--groups=$groups"
