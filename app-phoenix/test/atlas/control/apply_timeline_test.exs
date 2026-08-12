@@ -635,11 +635,11 @@ defmodule Atlas.Control.ApplyTimelineTest do
   end
 
   describe "sidecars that never start" do
-    test "a disabled sidecar settles instead of spinning forever" do
-      # RegionApplier broadcasts {:apply_restarting, all_ingest_services} and
-      # only filters on enabled? afterwards, and services ship disabled. Left
-      # alone these rows sit at running/"restarting" for the life of the page
-      # while the timeline reports :done.
+    test "a sidecar that reports nothing settles instead of spinning forever" do
+      # Left alone this row sits at running/"restarting" for the life of the
+      # page while the timeline reports :done. It settles without claiming to
+      # know why — the applier now announces only services it actually
+      # restarts, so silence means "we never heard from it", not "it is off".
       timeline =
         start_timeline(["valhalla", "overpass"])
         |> event({:apply_progress, %{phase: :restarting}})
@@ -651,8 +651,104 @@ defmodule Atlas.Control.ApplyTimelineTest do
       overpass = stage(timeline, :overpass)
 
       assert overpass.state == :skipped
-      assert overpass.detail =~ "not"
+      assert overpass.detail =~ "no progress reported"
       refute timeline.current_step > length(timeline.stages)
     end
   end
+  describe "a sidecar that was settled early but then reports" do
+    test "folds its real progress instead of staying 'disabled' forever" do
+      # `settle_unstarted` guesses from "no tick yet" at :apply_done, and a
+      # freshly restarted OTP (JVM boot) has not logged by then. A later tick is
+      # proof the guess was wrong, so the row has to recover.
+      now = ~U[2026-08-12 12:00:00Z]
+
+      timeline =
+        ApplyTimeline.start(["berlin"], ["valhalla", "otp"], now)
+        |> ApplyTimeline.apply_event({:apply_restarting, ["valhalla", "otp"]}, now)
+        |> ApplyTimeline.apply_event({:apply_done, %{regions: ["berlin"]}}, now)
+
+      settled = Enum.find(timeline.stages, &(&1.key == :otp))
+      assert settled.state == :skipped
+
+      recovered =
+        ApplyTimeline.apply_event(
+          timeline,
+          {:service_update, %{name: "otp", status: :starting, phase: "building-graph", progress: 0.4, ready?: false}},
+          now
+        )
+
+      stage = Enum.find(recovered.stages, &(&1.key == :otp))
+      assert stage.state == :running
+      assert stage.detail =~ "building-graph"
+    end
+  end
+
+  describe "terminal-state integrity" do
+    test "a finished sidecar is not reddened by a later crash" do
+      # The moduledoc's invariant: a sidecar row never moves backwards out of
+      # :done. A restart or a ServiceState reboot after this apply belongs to a
+      # different story.
+      timeline =
+        start_timeline(["valhalla"])
+        |> restarting(["valhalla"])
+        |> event({:service_update, snapshot("valhalla", %{phase: "ready", ready?: true})})
+
+      assert stage(timeline, :valhalla).state == :done
+
+      later =
+        event(timeline, {:service_update, snapshot("valhalla", %{status: :error, phase: "error"})})
+
+      assert stage(later, :valhalla).state == :done
+    end
+
+    test "a failed restart does not blame the conversion that succeeded" do
+      # :restarting has no entry in @phase_stage, so the error defaulted onto
+      # :convert — telling the user their Overpass source failed to build when
+      # it built fine and the restart is what broke.
+      timeline =
+        start_timeline(["valhalla"])
+        |> event({:apply_error, %{phase: :restarting, reason: "docker daemon gone"}})
+
+      refute stage(timeline, :convert).state == :error
+    end
+  end
+
+  describe "percentage/1" do
+    test "cannot exceed 100 when the source over-reports" do
+      # A redirected download whose Content-Length undercounts the body leaves
+      # current > total, which rendered as "127%".
+      m = %ApplyTimeline.Measure{kind: :bytes, current: 1270, total: 1000}
+
+      assert ApplyTimeline.percentage(m) == 100
+    end
+
+    test "cannot go below zero" do
+      m = %ApplyTimeline.Measure{kind: :bytes, current: -5, total: 1000}
+
+      assert ApplyTimeline.percentage(m) == 0
+    end
+  end
+
+  describe "a stage can say what it decided" do
+    test "the staging row reports the time zone it pinned" do
+      # Whether OTP got a zone or the config was deleted as ambiguous is
+      # otherwise invisible — a silent branch in a feature about silent
+      # failures.
+      timeline =
+        start_timeline(["valhalla"])
+        |> event({:apply_progress, %{phase: :staging, detail: "time zone Europe/Berlin"}})
+
+      assert stage(timeline, :stage_otp).detail == "time zone Europe/Berlin"
+    end
+
+    test "a progress event without a detail leaves the stage's own text alone" do
+      timeline =
+        start_timeline(["valhalla"])
+        |> event({:apply_progress, %{phase: :staging, detail: "time zone Europe/Berlin"}})
+        |> event({:apply_progress, %{phase: :staging}})
+
+      assert stage(timeline, :stage_otp).detail == "time zone Europe/Berlin"
+    end
+  end
+
 end

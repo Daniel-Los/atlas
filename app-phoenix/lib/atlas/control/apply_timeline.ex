@@ -228,7 +228,10 @@ defmodule Atlas.Control.ApplyTimeline do
   @doc "Percentage for a measure, or nil when the total is unknown."
   def percentage(%Measure{total: total}) when is_nil(total), do: nil
   def percentage(%Measure{total: total}) when total <= 0, do: nil
-  def percentage(%Measure{current: current, total: total}), do: round(current / total * 100)
+  # Clamped: a redirected download whose Content-Length undercounts the body
+  # leaves current > total, which rendered as "127%".
+  def percentage(%Measure{current: current, total: total}),
+    do: (current / total * 100) |> round() |> min(100) |> max(0)
   def percentage(nil), do: nil
 
   @doc "Fold one event into the timeline."
@@ -242,13 +245,13 @@ defmodule Atlas.Control.ApplyTimeline do
     |> recompute_step()
   end
 
-  def apply_event(timeline, {:apply_progress, %{phase: phase}}, now)
+  def apply_event(timeline, {:apply_progress, %{phase: phase} = payload}, now)
       when is_map_key(@phase_stage, phase) do
     key = Map.fetch!(@phase_stage, phase)
 
     timeline
     |> complete_stages_before(key, now)
-    |> put_stage(key, &mark_running(&1, now))
+    |> put_stage(key, &(&1 |> mark_running(now) |> put_detail(payload[:detail])))
     |> recompute_step()
   end
 
@@ -286,7 +289,10 @@ defmodule Atlas.Control.ApplyTimeline do
   end
 
   def apply_event(timeline, {:apply_error, %{phase: phase} = payload}, now) do
-    key = Map.get(@phase_stage, phase, :convert)
+    # A phase with no stage of its own (`:restarting`) errors the last applier
+    # stage rather than defaulting onto `:convert`, which would report a
+    # conversion failure for a conversion that succeeded.
+    key = Map.get(@phase_stage, phase, last_applier_stage(timeline))
 
     timeline
     |> complete_stages_before(key, now)
@@ -343,9 +349,18 @@ defmodule Atlas.Control.ApplyTimeline do
   # snapshots in. A row still `:pending` was seeded but never restarted; a
   # `:skipped` one was explicitly excluded. Letting either absorb a
   # hand-restart's ticks would credit someone else's ingest to this apply.
+  # `:skipped` is adoptable again on purpose. It is reached two ways: the
+  # service was excluded from `{:apply_restarting, …}` (never ours, and it has
+  # no stage at all), or `settle_unstarted/2` guessed from "no tick by
+  # :apply_done" that it was disabled. A tick arriving afterwards is proof that
+  # guess was wrong — an enabled sidecar that simply had not logged yet — so it
+  # must be allowed to correct itself rather than sit at "disabled" while it
+  # ingests for hours.
   defp adopted?(timeline, key) do
-    Enum.any?(timeline.stages, &(&1.key == key and &1.state not in [:pending, :skipped]))
+    Enum.any?(timeline.stages, &(&1.key == key and &1.state != :pending))
   end
+
+  defp fold_service(%Stage{state: :done} = stage, _snapshot, _now), do: stage
 
   defp fold_service(stage, %{status: :error} = snapshot, now) do
     %{
@@ -375,7 +390,6 @@ defmodule Atlas.Control.ApplyTimeline do
   # A finished sidecar stays finished. A later non-ready tick — a hand
   # restart after this apply, a ServiceState reboot re-deriving `ready?`
   # from the DB — belongs to a different story and must not un-finish it.
-  defp fold_service(%Stage{state: :done} = stage, _snapshot, _now), do: stage
 
   defp fold_service(stage, snapshot, now) do
     %{
@@ -518,7 +532,10 @@ defmodule Atlas.Control.ApplyTimeline do
 
   defp settle_unstarted(%Stage{key: key, state: :running, started_at: nil} = stage, now) do
     if sidecar?(key) do
-      %{stage | state: :skipped, detail: "not started — service is disabled", finished_at: now}
+      # Deliberately not "service is disabled": the applier now announces only
+      # the services it actually restarts, so a row with no tick means we never
+      # heard from it, not that we know it is off.
+      %{stage | state: :skipped, detail: "no progress reported", finished_at: now}
     else
       stage
     end
@@ -530,6 +547,26 @@ defmodule Atlas.Control.ApplyTimeline do
     do: sidecar?(key) and not is_nil(started_at)
 
   defp still_ingesting?(_stage), do: false
+
+  # The furthest applier stage that ran, so an error outside the mapped phases
+  # lands on work that actually happened.
+  defp last_applier_stage(timeline) do
+    applier_keys = Enum.map(@applier_stages, &elem(&1, 0))
+
+    timeline.stages
+    |> Enum.filter(&(&1.key in applier_keys and &1.state in [:running, :done]))
+    |> List.last()
+    |> case do
+      nil -> :download
+      stage -> stage.key
+    end
+  end
+
+  # A stage can report a decision it made — which time zone OTP was pinned to,
+  # or that the regions disagreed and none was. Absent detail leaves whatever
+  # the stage already said, so a later progress tick cannot erase it.
+  defp put_detail(stage, nil), do: stage
+  defp put_detail(stage, detail), do: %{stage | detail: detail}
 
   defp to_message(reason) when is_binary(reason), do: reason
   defp to_message(reason), do: inspect(reason)
