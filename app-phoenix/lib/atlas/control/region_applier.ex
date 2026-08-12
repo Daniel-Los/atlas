@@ -194,7 +194,7 @@ defmodule Atlas.Control.RegionApplier do
           restart_services(state, job_id, @ingest_services)
 
         {:error, _phase, _reason} = error ->
-          restart_services(state, job_id, @ingest_services -- ["overpass"])
+          restart_after_failed_convert(state, job_id)
           error
       end
     end
@@ -426,6 +426,20 @@ defmodule Atlas.Control.RegionApplier do
   # broadcast, so naming a service that is switched off hands it a row that can
   # never start — which the timeline then has to guess about, and guessed wrong
   # for an enabled service that simply had not logged yet.
+  # The convert failure is what fails the apply, but a restart that also failed
+  # must not vanish with it: unrecorded, the valhalla and otp rows go green off
+  # the old container's log ticks.
+  defp restart_after_failed_convert(state, job_id) do
+    case restart_services(state, job_id, @ingest_services -- ["overpass"]) do
+      :ok -> :ok
+      {:error, phase, reason} -> broadcast_error(job_id, phase, reason)
+    end
+  end
+
+  defp broadcast_error(job_id, phase, reason) do
+    broadcast({:apply_error, %{job_id: job_id, phase: phase, reason: format_reason(reason)}})
+  end
+
   defp restart_services(state, job_id, services) do
     progress(state, job_id, :restarting, %{region: nil, progress: nil})
 

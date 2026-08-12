@@ -263,6 +263,22 @@ defmodule Atlas.Control.RegionApplierTest do
              tmp |> Path.join("otp/build-config.json") |> File.read!() |> Jason.decode!()
   end
 
+  test "a restart failure is recorded even when the convert already failed", %{tmp: tmp} do
+    # The convert-failure path restarts valhalla/otp and returned the convert
+    # error, discarding the restart result — so a restart that never happened
+    # went unrecorded and those rows still went green off the old container.
+    start_applier(tmp,
+      osmium_convert: fn _dir, _in, _out -> {:error, 1, "osmium: killed"} end,
+      restart: fn _names -> {:error, "docker daemon gone"} end
+    )
+
+    assert {:ok, job_id} = RegionApplier.start(["berlin"])
+    assert_receive {:apply_error, %{job_id: ^job_id, phase: :converting}}, 2_000
+
+    assert_received {:apply_error, %{phase: :restarting, reason: restart_reason}}
+    assert restart_reason =~ "docker daemon gone"
+  end
+
   test "a failed restart fails the apply instead of reporting success", %{tmp: tmp} do
     start_applier(tmp, restart: fn _names -> {:error, "docker daemon gone"} end)
 
