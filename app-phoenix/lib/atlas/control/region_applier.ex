@@ -441,11 +441,16 @@ defmodule Atlas.Control.RegionApplier do
   defp default_enabled?(name),
     do: match?(%{enabled?: true}, Atlas.Control.Safe.snapshot(name))
 
+  # DockerCompose documents that callers must not discard failures. Swallowing
+  # them reported a successful apply for a restart that never happened, leaving
+  # the sidecar rows to settle as "no progress reported".
   defp default_restart(names) do
-    names
-    |> Enum.each(&Atlas.Control.DockerCompose.restart/1)
-
-    :ok
+    Enum.reduce_while(names, :ok, fn name, :ok ->
+      case Atlas.Control.DockerCompose.restart(name) do
+        {:ok, _output} -> {:cont, :ok}
+        {:error, code, output} -> {:halt, {:error, "#{name}: exit #{code}: #{output}"}}
+      end
+    end)
   end
 
   defp progress(state, job_id, phase, extra) do

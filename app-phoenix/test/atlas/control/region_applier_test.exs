@@ -263,6 +263,15 @@ defmodule Atlas.Control.RegionApplierTest do
              tmp |> Path.join("otp/build-config.json") |> File.read!() |> Jason.decode!()
   end
 
+  test "a failed restart fails the apply instead of reporting success", %{tmp: tmp} do
+    start_applier(tmp, restart: fn _names -> {:error, "docker daemon gone"} end)
+
+    assert {:ok, job_id} = RegionApplier.start(["berlin"])
+
+    assert_receive {:apply_error, %{job_id: ^job_id, phase: :restarting, reason: reason}}, 2_000
+    assert reason =~ "docker daemon gone"
+  end
+
   test "staging reports which time zone it pinned", %{tmp: tmp} do
     start_applier(tmp)
 
