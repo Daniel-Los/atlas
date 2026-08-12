@@ -223,7 +223,7 @@ printf '\n== the docker CLI can load its plugins as the dropped user ==\n'
 # "docker compose unavailable".
 setup_sandbox 0 "0"
 run_entrypoint env
-assert_not_contains "does not leave DOCKER_CONFIG under root's home" "$RUN_OUTPUT" "/root/.docker"
+assert_not_contains "does not leave DOCKER_CONFIG under root's home" "$RUN_ENV" "/root/.docker"
 assert_contains "exports a reachable DOCKER_CONFIG" "$RUN_ENV" "DOCKER_CONFIG="
 teardown_sandbox
 

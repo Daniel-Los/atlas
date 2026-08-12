@@ -197,6 +197,28 @@ defmodule AtlasWeb.MapLiveTest do
       assert Enum.all?(points, &(is_number(&1.lat) and is_number(&1.lon) and is_binary(&1.label)))
     end
 
+    test "emptying the box clears the pins, not just the list", %{conn: conn} do
+      # Escape was fixed; backspacing was not. The list vanished while every
+      # marker stayed on the map.
+      {:ok, view, _html} = live(conn, ~p"/")
+      typed(view, "berlin")
+      assert_push_event(view, "map:set_results", %{points: [_ | _]})
+
+      typed(view, "")
+
+      assert_push_event(view, "map:set_results", %{points: []})
+    end
+
+    test "backspacing below the minimum clears them too", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      typed(view, "berlin")
+      assert_push_event(view, "map:set_results", %{points: [_ | _]})
+
+      typed(view, "b")
+
+      assert_push_event(view, "map:set_results", %{points: []})
+    end
+
     test "a search with no matches clears the map", %{conn: conn, bypass: bypass} do
       Bypass.stub(bypass, "GET", "/api", fn c -> Plug.Conn.resp(c, 200, ~s({"features":[]})) end)
 

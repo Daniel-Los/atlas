@@ -559,12 +559,16 @@ defmodule AtlasWeb.MapLive do
     if searchable?(q) do
       dispatch_search(socket, q)
     else
-      assign(socket,
+      # The markers go with the list. Escape cleared them; backspacing did not,
+      # so emptying the box left every pin stranded on the map.
+      socket
+      |> assign(
         search_query: q,
         search_results: [],
         search_active: -1,
         search_searched: false
       )
+      |> push_results([])
     end
   end
 
