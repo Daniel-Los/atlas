@@ -264,4 +264,41 @@ defmodule Atlas.Control.ServiceStateTest do
       assert %{status: :unknown} = ServiceState.snapshot("photon")
     end
   end
+  describe "status derived from a parser phase" do
+    # Every parser emits phase as a STRING ("downloading", "error"). The status
+    # guards matched atoms, so every enabled non-ready service collapsed to
+    # :starting: a crashed Photon read "still installing — 0%" in the search
+    # panel, and :downloading/:building were unreachable in the services tab.
+    setup do
+      {:ok, name: "photon-#{System.unique_integer([:positive])}"}
+    end
+
+    test "a string error phase is an error, not a slow start", %{name: name} do
+      assert ServiceState.status_for(true, false, "error") == :error
+      assert ServiceState.status_for(true, false, "unhealthy") == :unhealthy
+    end
+
+    test "a string download phase reads as downloading", %{name: _name} do
+      assert ServiceState.status_for(true, false, "downloading") == :downloading
+    end
+
+    test "a string build phase reads as building", %{name: _name} do
+      assert ServiceState.status_for(true, false, "building-graph") == :building
+      assert ServiceState.status_for(true, false, "building-tiles") == :building
+    end
+
+    test "ready still wins over any phase", %{name: _name} do
+      assert ServiceState.status_for(true, true, "error") == :ready
+    end
+
+    test "a disabled service is stopped whatever it last logged", %{name: _name} do
+      assert ServiceState.status_for(false, true, "ready") == :stopped
+    end
+
+    test "an unrecognised phase is still just starting", %{name: _name} do
+      assert ServiceState.status_for(true, false, "warming-up") == :starting
+      assert ServiceState.status_for(true, false, nil) == :starting
+    end
+  end
+
 end
