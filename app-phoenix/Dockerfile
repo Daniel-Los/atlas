@@ -19,6 +19,12 @@ RUN mix deps.compile
 COPY priv priv
 COPY lib lib
 COPY rel rel
+# Windows checkouts may give the release overlay scripts CRLF endings. Linux
+# then reads the entrypoint shebang as `/bin/sh\r` and reports the misleading
+# "no such file or directory" even though the script is present.
+RUN sed -i 's/\r$//' rel/overlays/bin/docker-entrypoint \
+    rel/overlays/bin/migrate \
+    rel/overlays/bin/server
 COPY assets assets
 RUN mix compile
 

@@ -1,0 +1,6 @@
+# Shell scripts copied into Linux images must retain Unix line endings even
+# when the repository is checked out from Windows or built through WSL.
+*.sh text eol=lf
+app-phoenix/rel/overlays/bin/docker-entrypoint text eol=lf
+app-phoenix/rel/overlays/bin/migrate text eol=lf
+app-phoenix/rel/overlays/bin/server text eol=lf

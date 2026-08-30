@@ -26,3 +26,4 @@ data/*
 
 # Worktrees for isolated feature work
 .worktrees/
+
