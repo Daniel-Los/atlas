@@ -29,6 +29,7 @@ defmodule AtlasWeb.MapLive do
        tiles_url: Settings.tiles_url(),
        theme: Settings.tiles_theme(),
        active_tab: "search",
+       mobile_panel_open: false,
        search_query: "",
        search_results: [],
        directions: nil,
@@ -54,7 +55,12 @@ defmodule AtlasWeb.MapLive do
   @impl true
   def handle_event("select_tab", %{"tab" => tab}, socket)
       when tab in ~w(search route places settings) do
-    {:noreply, assign(socket, active_tab: tab)}
+    {:noreply, assign(socket, active_tab: tab, mobile_panel_open: true)}
+  end
+
+  @impl true
+  def handle_event("toggle_mobile_panel", _params, socket) do
+    {:noreply, assign(socket, mobile_panel_open: not socket.assigns.mobile_panel_open)}
   end
 
   @impl true
@@ -551,6 +557,7 @@ defmodule AtlasWeb.MapLive do
     <div class="fixed inset-0 p-2 sm:p-3 bg-base-200 flex gap-2 sm:gap-3">
       <AtlasWeb.SidePanel.side_panel
         active_tab={@active_tab}
+        mobile_panel_open={@mobile_panel_open}
         search_query={@search_query}
         search_results={@search_results}
         directions={@directions}
