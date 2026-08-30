@@ -10,6 +10,7 @@ defmodule AtlasWeb.SidePanel do
   import AtlasWeb.IconHelpers
 
   attr :active_tab, :string, required: true
+  attr :mobile_panel_open, :boolean, required: true
   attr :search_query, :string, required: true
   attr :search_results, :list, required: true
   attr :directions, :any, required: true
@@ -28,7 +29,10 @@ defmodule AtlasWeb.SidePanel do
 
   def side_panel(assigns) do
     ~H"""
-    <aside class="flex flex-col flex-none">
+    <aside class={[
+      "atlas-side-panel relative z-20 flex flex-col flex-none",
+      @mobile_panel_open && "atlas-mobile-panel-open"
+    ]}>
       <div class="apo-brand px-2.5 py-3 flex items-center gap-2.5 flex-shrink-0">
         <span class="w-2.5 h-2.5 rounded-full bg-primary shadow-sm flex-shrink-0"></span>
         <span class="apo-brand-text font-display font-semibold text-[15px] leading-none tracking-tight whitespace-nowrap text-base-content">
@@ -42,6 +46,17 @@ defmodule AtlasWeb.SidePanel do
           <.tab_button active={@active_tab} tab="route" icon="route" label="Directions" />
           <.tab_button active={@active_tab} tab="places" icon="map-pin" label="Places" />
           <.tab_button active={@active_tab} tab="settings" icon="settings" label="Settings" />
+          <button
+            type="button"
+            class="atlas-mobile-panel-toggle btn btn-square btn-sm btn-ghost"
+            phx-click="toggle_mobile_panel"
+            aria-controls="atlas-side-panel-content"
+            aria-expanded={to_string(@mobile_panel_open)}
+            aria-label={if @mobile_panel_open, do: "Sidebar sluiten", else: "Sidebar openen"}
+            title={if @mobile_panel_open, do: "Sidebar sluiten", else: "Sidebar openen"}
+          >
+            {icon("chevron-down", class: "atlas-mobile-panel-toggle-icon w-5 h-5")}
+          </button>
           <div class="flex-1"></div>
           <button
             type="button"
@@ -54,7 +69,10 @@ defmodule AtlasWeb.SidePanel do
           </button>
         </nav>
 
-        <div class="w-[min(85vw,380px)] flex flex-col overflow-hidden">
+        <div
+          id="atlas-side-panel-content"
+          class="atlas-side-panel-content w-[min(85vw,380px)] flex flex-col overflow-hidden"
+        >
           <div class={tab_visible_class(@active_tab, "search")}>
             <AtlasWeb.SearchCard.search_card
               id="search-card"
