@@ -70,6 +70,12 @@ defmodule AtlasWeb.MapLive do
   end
 
   @impl true
+  def handle_event("set_mobile_panel_state", %{"open" => open}, socket)
+      when is_boolean(open) do
+    {:noreply, assign(socket, mobile_panel_open: open)}
+  end
+
+  @impl true
   def handle_event("search", %{"q" => q}, socket) do
     trimmed = String.trim(q)
 

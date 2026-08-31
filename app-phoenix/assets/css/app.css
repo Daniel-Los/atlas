@@ -206,6 +206,7 @@ body {
     box-shadow: 0 -16px 48px color-mix(in oklch, var(--color-base-content) 18%, transparent);
     overflow: hidden;
     pointer-events: auto;
+    touch-action: none;
   }
 
   .atlas-side-panel-content.atlas-sheet-animating {

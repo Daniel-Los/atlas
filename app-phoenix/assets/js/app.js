@@ -9,12 +9,12 @@ const MobileSheet = {
   mounted() {
     this.panel = this.el.closest(".atlas-side-panel")
     this.handle = this.el.querySelector("[data-sheet-handle]")
-    this.state = this.panel?.classList.contains("atlas-mobile-panel-open") ? "entry" : "collapsed"
+    this.state = this.panel?.classList.contains("atlas-mobile-panel-open") ? "half" : "collapsed"
     this.dragging = false
 
     this.snapHeights = () => ({
       collapsed: 0,
-      entry: Math.max(240, window.innerHeight * 0.3),
+      half: window.innerHeight * 0.5,
       fullscreen: window.innerHeight
     })
 
@@ -34,20 +34,24 @@ const MobileSheet = {
 
     this.nearestState = () => {
       const height = this.el.getBoundingClientRect().height
-      const snaps = this.snapHeights()
-      return Object.entries(snaps).reduce((nearest, [state, snapHeight]) =>
-        Math.abs(height - snapHeight) < Math.abs(height - snaps[nearest]) ? state : nearest
-      , "collapsed")
+      const viewport = window.innerHeight
+
+      // Keep the 50% resting point forgiving: only a deliberate pull close to
+      // an edge should commit to collapsed or fullscreen.
+      if (height <= viewport * 0.15) return "collapsed"
+      if (height >= viewport * 0.85) return "fullscreen"
+      return "half"
     }
 
     this.onPointerDown = event => {
       if (window.innerWidth > 639 || event.button !== 0) return
+      if (event.target.closest("button, input, textarea, select, a, label")) return
       this.dragging = true
       this.startY = event.clientY
       this.startHeight = this.el.getBoundingClientRect().height
       this.el.classList.remove("atlas-sheet-animating")
       this.el.classList.add("atlas-sheet-dragging")
-      this.handle?.setPointerCapture(event.pointerId)
+      this.el.setPointerCapture?.(event.pointerId)
     }
 
     this.onPointerMove = event => {
@@ -60,29 +64,32 @@ const MobileSheet = {
       if (!this.dragging) return
       this.dragging = false
       this.el.classList.remove("atlas-sheet-dragging")
-      this.setState(this.nearestState())
+      const state = this.nearestState()
+      this.setState(state)
+      this.pushEvent("set_mobile_panel_state", {open: state !== "collapsed"})
     }
 
     this.onResize = () => this.setState(this.state, false)
-    this.handle?.addEventListener("pointerdown", this.onPointerDown)
-    this.handle?.addEventListener("pointermove", this.onPointerMove)
-    this.handle?.addEventListener("pointerup", this.onPointerUp)
-    this.handle?.addEventListener("pointercancel", this.onPointerUp)
+    this.el.addEventListener("pointerdown", this.onPointerDown)
+    this.el.addEventListener("pointermove", this.onPointerMove)
+    this.el.addEventListener("pointerup", this.onPointerUp)
+    this.el.addEventListener("pointercancel", this.onPointerUp)
     window.addEventListener("resize", this.onResize)
     this.setState(this.state, false)
   },
 
   updated() {
-    if (window.innerWidth <= 639 && this.panel?.classList.contains("atlas-mobile-panel-open") && this.state === "collapsed") {
-      this.setState("entry")
-    }
+    if (window.innerWidth > 639) return
+    const open = this.panel?.classList.contains("atlas-mobile-panel-open")
+    if (!open && this.state !== "collapsed") this.setState("collapsed")
+    if (open && this.state === "collapsed") this.setState("half")
   },
 
   destroyed() {
-    this.handle?.removeEventListener("pointerdown", this.onPointerDown)
-    this.handle?.removeEventListener("pointermove", this.onPointerMove)
-    this.handle?.removeEventListener("pointerup", this.onPointerUp)
-    this.handle?.removeEventListener("pointercancel", this.onPointerUp)
+    this.el.removeEventListener("pointerdown", this.onPointerDown)
+    this.el.removeEventListener("pointermove", this.onPointerMove)
+    this.el.removeEventListener("pointerup", this.onPointerUp)
+    this.el.removeEventListener("pointercancel", this.onPointerUp)
     window.removeEventListener("resize", this.onResize)
   }
 }
