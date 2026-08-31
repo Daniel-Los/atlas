@@ -35,13 +35,33 @@ function setupMobileSheetDrag() {
   const panel = document.querySelector(".atlas-side-panel")
   if (!sheet || !panel || sheet.dataset.dragBound === "true") return
 
+  const getPeekHeight = () => Math.min(window.innerHeight * 0.46, 380)
+  const getFullHeight = () => Math.max(window.innerHeight - 18, 420)
+
+  const setPanelState = (state) => {
+    const isOpen = state !== "hidden"
+    sheet.dataset.state = state
+    panel.classList.toggle("atlas-mobile-panel-open", isOpen)
+
+    if (state === "hidden") {
+      sheet.style.height = "0px"
+      return
+    }
+
+    const nextHeight = state === "fullscreen" ? getFullHeight() : getPeekHeight()
+    sheet.style.height = `${nextHeight}px`
+  }
+
+  const currentState = () => sheet.dataset.state || "peek"
+
   let startY = 0
   let startHeight = 0
+  let startState = "peek"
   let dragging = false
 
   const setHeight = (value) => {
-    const minH = 180
-    const maxH = Math.min(window.innerHeight * 0.62, 420)
+    const minH = 200
+    const maxH = getFullHeight()
     const next = Math.min(Math.max(value, minH), maxH)
     sheet.style.height = `${next}px`
   }
@@ -52,7 +72,8 @@ function setupMobileSheetDrag() {
 
     dragging = true
     startY = event.clientY
-    startHeight = sheet.offsetHeight
+    startHeight = sheet.offsetHeight || getPeekHeight()
+    startState = currentState()
     sheet.setPointerCapture?.(event.pointerId)
     panel.classList.add("atlas-dragging")
   })
@@ -60,7 +81,9 @@ function setupMobileSheetDrag() {
   sheet.addEventListener("pointermove", (event) => {
     if (!dragging) return
     const delta = startY - event.clientY
-    setHeight(startHeight + delta)
+    const base = startState === "fullscreen" ? getFullHeight() : getPeekHeight()
+    const next = startState === "hidden" ? getPeekHeight() : Math.max(200, Math.min(base + delta, getFullHeight()))
+    setHeight(next)
   })
 
   const finishDrag = () => {
@@ -68,20 +91,27 @@ function setupMobileSheetDrag() {
     dragging = false
     panel.classList.remove("atlas-dragging")
 
-    const height = sheet.offsetHeight
-    const threshold = window.innerHeight * 0.28
-    if (height < threshold) {
-      panel.classList.remove("atlas-mobile-panel-open")
-      sheet.style.height = "0px"
-    } else {
-      panel.classList.add("atlas-mobile-panel-open")
-      setHeight(Math.min(Math.max(height, 220), Math.min(window.innerHeight * 0.62, 420)))
+    const height = sheet.offsetHeight || getPeekHeight()
+    const fullThreshold = window.innerHeight * 0.72
+    const hiddenThreshold = 210
+
+    if (height > fullThreshold) {
+      setPanelState("fullscreen")
+      return
     }
+
+    if (height < hiddenThreshold) {
+      setPanelState("hidden")
+      return
+    }
+
+    setPanelState("peek")
   }
 
   sheet.addEventListener("pointerup", finishDrag)
   sheet.addEventListener("pointercancel", finishDrag)
   sheet.dataset.dragBound = "true"
+  setPanelState(currentState())
 }
 
 window.addEventListener("resize", setupMobileSheetDrag)
