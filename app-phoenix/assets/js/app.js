@@ -32,22 +32,13 @@ const MobileSheet = {
       this.el.style.height = `${this.snapHeights()[state]}px`
     }
 
-    this.nearestState = () => {
-      const height = this.el.getBoundingClientRect().height
-      const viewport = window.innerHeight
-
-      // Keep the 50% resting point forgiving: only a deliberate pull close to
-      // an edge should commit to collapsed or fullscreen.
-      if (height <= viewport * 0.15) return "collapsed"
-      if (height >= viewport * 0.85) return "fullscreen"
-      return "half"
-    }
-
     this.onPointerDown = event => {
       if (window.innerWidth > 639 || event.button !== 0) return
       if (event.target.closest("button, input, textarea, select, a, label")) return
       this.dragging = true
+      this.startState = this.state
       this.startY = event.clientY
+      this.lastY = event.clientY
       this.startHeight = this.el.getBoundingClientRect().height
       this.el.classList.remove("atlas-sheet-animating")
       this.el.classList.add("atlas-sheet-dragging")
@@ -56,6 +47,7 @@ const MobileSheet = {
 
     this.onPointerMove = event => {
       if (!this.dragging) return
+      this.lastY = event.clientY
       const height = Math.max(0, Math.min(window.innerHeight, this.startHeight + this.startY - event.clientY))
       this.el.style.height = `${height}px`
     }
@@ -64,7 +56,20 @@ const MobileSheet = {
       if (!this.dragging) return
       this.dragging = false
       this.el.classList.remove("atlas-sheet-dragging")
-      const state = this.nearestState()
+      const nudge = this.startY - this.lastY
+      let state = this.startState
+
+      // A small deliberate nudge advances or retreats one snap point. This
+      // keeps fullscreen -> half and half -> collapsed responsive without
+      // requiring the sheet to cross an arbitrary height threshold.
+      if (Math.abs(nudge) >= 12) {
+        if (nudge > 0) {
+          state = this.startState === "collapsed" ? "half" : "fullscreen"
+        } else {
+          state = this.startState === "fullscreen" ? "half" : "collapsed"
+        }
+      }
+
       this.setState(state)
       this.pushEvent("set_mobile_panel_state", {open: state !== "collapsed"})
     }
@@ -81,8 +86,15 @@ const MobileSheet = {
   updated() {
     if (window.innerWidth > 639) return
     const open = this.panel?.classList.contains("atlas-mobile-panel-open")
-    if (!open && this.state !== "collapsed") this.setState("collapsed")
-    if (open && this.state === "collapsed") this.setState("half")
+    if (!open) {
+      this.setState("collapsed", false)
+    } else if (this.state === "collapsed") {
+      this.setState("half", false)
+    } else {
+      // LiveView patches can replace the inline style; always restore the
+      // active snap height after an icon/tab click.
+      this.setState(this.state, false)
+    }
   },
 
   destroyed() {

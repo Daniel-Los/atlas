@@ -196,7 +196,7 @@ body {
     top: auto;
     z-index: 25;
     width: min(100vw, 640px) !important;
-    height: 30dvh;
+    height: 60dvh;
     max-height: 100dvh;
     transform: translateX(-50%);
     border: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
