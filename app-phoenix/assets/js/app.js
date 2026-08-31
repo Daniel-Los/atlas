@@ -5,11 +5,93 @@ import topbar from "../vendor/topbar"
 import MapHook from "./hooks/map"
 import LogStreamHook from "./hooks/log_stream"
 
+const MobileSheet = {
+  mounted() {
+    this.panel = this.el.closest(".atlas-side-panel")
+    this.handle = this.el.querySelector("[data-sheet-handle]")
+    this.state = this.panel?.classList.contains("atlas-mobile-panel-open") ? "entry" : "collapsed"
+    this.dragging = false
+
+    this.snapHeights = () => ({
+      collapsed: 0,
+      entry: Math.max(240, window.innerHeight * 0.3),
+      fullscreen: window.innerHeight
+    })
+
+    this.setState = (state, animate = true) => {
+      if (window.innerWidth > 639) {
+        this.el.style.removeProperty("height")
+        this.el.dataset.sheetState = ""
+        return
+      }
+
+      this.state = state
+      this.el.dataset.sheetState = state
+      this.el.classList.toggle("atlas-sheet-animating", animate)
+      this.panel?.classList.toggle("atlas-mobile-panel-open", state !== "collapsed")
+      this.el.style.height = `${this.snapHeights()[state]}px`
+    }
+
+    this.nearestState = () => {
+      const height = this.el.getBoundingClientRect().height
+      const snaps = this.snapHeights()
+      return Object.entries(snaps).reduce((nearest, [state, snapHeight]) =>
+        Math.abs(height - snapHeight) < Math.abs(height - snaps[nearest]) ? state : nearest
+      , "collapsed")
+    }
+
+    this.onPointerDown = event => {
+      if (window.innerWidth > 639 || event.button !== 0) return
+      this.dragging = true
+      this.startY = event.clientY
+      this.startHeight = this.el.getBoundingClientRect().height
+      this.el.classList.remove("atlas-sheet-animating")
+      this.el.classList.add("atlas-sheet-dragging")
+      this.handle?.setPointerCapture(event.pointerId)
+    }
+
+    this.onPointerMove = event => {
+      if (!this.dragging) return
+      const height = Math.max(0, Math.min(window.innerHeight, this.startHeight + this.startY - event.clientY))
+      this.el.style.height = `${height}px`
+    }
+
+    this.onPointerUp = () => {
+      if (!this.dragging) return
+      this.dragging = false
+      this.el.classList.remove("atlas-sheet-dragging")
+      this.setState(this.nearestState())
+    }
+
+    this.onResize = () => this.setState(this.state, false)
+    this.handle?.addEventListener("pointerdown", this.onPointerDown)
+    this.handle?.addEventListener("pointermove", this.onPointerMove)
+    this.handle?.addEventListener("pointerup", this.onPointerUp)
+    this.handle?.addEventListener("pointercancel", this.onPointerUp)
+    window.addEventListener("resize", this.onResize)
+    this.setState(this.state, false)
+  },
+
+  updated() {
+    if (window.innerWidth <= 639 && this.panel?.classList.contains("atlas-mobile-panel-open") && this.state === "collapsed") {
+      this.setState("entry")
+    }
+  },
+
+  destroyed() {
+    this.handle?.removeEventListener("pointerdown", this.onPointerDown)
+    this.handle?.removeEventListener("pointermove", this.onPointerMove)
+    this.handle?.removeEventListener("pointerup", this.onPointerUp)
+    this.handle?.removeEventListener("pointercancel", this.onPointerUp)
+    window.removeEventListener("resize", this.onResize)
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {Map: MapHook, LogStream: LogStreamHook}
+  hooks: {Map: MapHook, LogStream: LogStreamHook, MobileSheet}
 })
 
 topbar.config({barColors: {0: "#3b82f6"}, shadowColor: "rgba(0, 0, 0, .3)"})
@@ -27,93 +109,3 @@ window.atlasToggleTheme = () => {
     current === "bunker-brutalist" ? "forest-patina" : "bunker-brutalist"
   )
 }
-
-function setupMobileSheetDrag() {
-  if (window.innerWidth > 639) return
-
-  const sheet = document.querySelector(".atlas-side-panel-content")
-  const panel = document.querySelector(".atlas-side-panel")
-  if (!sheet || !panel || sheet.dataset.dragBound === "true") return
-
-  const getPeekHeight = () => Math.min(window.innerHeight * 0.46, 380)
-  const getFullHeight = () => Math.max(window.innerHeight - 18, 420)
-
-  const setPanelState = (state) => {
-    const isOpen = state !== "hidden"
-    sheet.dataset.state = state
-    panel.classList.toggle("atlas-mobile-panel-open", isOpen)
-
-    if (state === "hidden") {
-      sheet.style.height = "0px"
-      return
-    }
-
-    const nextHeight = state === "fullscreen" ? getFullHeight() : getPeekHeight()
-    sheet.style.height = `${nextHeight}px`
-  }
-
-  const currentState = () => sheet.dataset.state || "peek"
-
-  let startY = 0
-  let startHeight = 0
-  let startState = "peek"
-  let dragging = false
-
-  const setHeight = (value) => {
-    const minH = 200
-    const maxH = getFullHeight()
-    const next = Math.min(Math.max(value, minH), maxH)
-    sheet.style.height = `${next}px`
-  }
-
-  sheet.addEventListener("pointerdown", (event) => {
-    if (window.innerWidth > 639) return
-    if (event.target.closest("button, input, textarea, select, a, label")) return
-
-    dragging = true
-    startY = event.clientY
-    startHeight = sheet.offsetHeight || getPeekHeight()
-    startState = currentState()
-    sheet.setPointerCapture?.(event.pointerId)
-    panel.classList.add("atlas-dragging")
-  })
-
-  sheet.addEventListener("pointermove", (event) => {
-    if (!dragging) return
-    const delta = startY - event.clientY
-    const base = startState === "fullscreen" ? getFullHeight() : getPeekHeight()
-    const next = startState === "hidden" ? getPeekHeight() : Math.max(200, Math.min(base + delta, getFullHeight()))
-    setHeight(next)
-  })
-
-  const finishDrag = () => {
-    if (!dragging) return
-    dragging = false
-    panel.classList.remove("atlas-dragging")
-
-    const height = sheet.offsetHeight || getPeekHeight()
-    const fullThreshold = window.innerHeight * 0.72
-    const hiddenThreshold = 210
-
-    if (height > fullThreshold) {
-      setPanelState("fullscreen")
-      return
-    }
-
-    if (height < hiddenThreshold) {
-      setPanelState("hidden")
-      return
-    }
-
-    setPanelState("peek")
-  }
-
-  sheet.addEventListener("pointerup", finishDrag)
-  sheet.addEventListener("pointercancel", finishDrag)
-  sheet.dataset.dragBound = "true"
-  setPanelState(currentState())
-}
-
-window.addEventListener("resize", setupMobileSheetDrag)
-document.addEventListener("DOMContentLoaded", setupMobileSheetDrag)
-document.addEventListener("phx:page-loading-stop", setupMobileSheetDrag)

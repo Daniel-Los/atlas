@@ -71,8 +71,17 @@ defmodule AtlasWeb.SidePanel do
 
         <div
           id="atlas-side-panel-content"
+          phx-hook="MobileSheet"
           class="atlas-side-panel-content w-[min(85vw,380px)] flex flex-col overflow-hidden"
         >
+          <button
+            type="button"
+            class="atlas-sheet-handle"
+            data-sheet-handle
+            aria-label="Resize menu"
+          >
+            <span></span>
+          </button>
           <div class={tab_visible_class(@active_tab, "search")}>
             <AtlasWeb.SearchCard.search_card
               id="search-card"

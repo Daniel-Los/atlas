@@ -123,29 +123,14 @@ body {
   display: none;
 }
 
-@media (max-width: 639px) {
-  .atlas-side-panel > .apo-brand {
-    position: fixed;
-    left: 14px;
-    top: 14px;
-    z-index: 30;
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
-    border-radius: 9999px;
-    background: color-mix(in oklch, var(--color-base-100) 85%, transparent);
-    box-shadow: 0 10px 24px color-mix(in oklch, var(--color-base-content) 10%, transparent);
-    backdrop-filter: blur(10px);
-    pointer-events: auto;
-  }
+.atlas-sheet-handle {
+  display: none;
+}
 
+@media (max-width: 639px) {
+  .atlas-side-panel > .apo-brand,
   .atlas-side-panel > .apo-brand-text {
-    display: inline-flex;
-    color: var(--color-base-content);
-    font-size: 0.78rem;
-    line-height: 1;
+    display: none;
   }
 
   .atlas-side-panel {
@@ -167,42 +152,35 @@ body {
   .atlas-side-panel nav {
     position: fixed;
     left: 50%;
-    bottom: 18px;
+    bottom: max(16px, env(safe-area-inset-bottom));
     transform: translateX(-50%);
     z-index: 30;
     display: flex;
     flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(15, 23, 42, 0.08);
+    gap: 6px;
+    padding: 8px;
+    background: color-mix(in oklch, var(--color-base-100) 88%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
     border-radius: 20px;
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+    box-shadow: 0 10px 30px color-mix(in oklch, var(--color-base-content) 16%, transparent);
     backdrop-filter: blur(12px);
     pointer-events: auto;
   }
 
   .atlas-side-panel nav > button {
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
-    border-radius: 14px !important;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    border-radius: 12px !important;
     border: 0;
     background: transparent;
     color: var(--color-base-content);
-    opacity: 0.95;
-  }
-
-  .atlas-side-panel nav > button:hover {
-    background: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
   }
 
   .atlas-side-panel nav > button.btn-primary {
     background: var(--color-primary);
     color: var(--color-primary-content);
-    box-shadow: 0 8px 18px color-mix(in oklch, var(--color-primary) 35%, transparent);
+    box-shadow: 0 8px 18px color-mix(in oklch, var(--color-primary) 30%, transparent);
   }
 
   .atlas-side-panel nav > .flex-1,
@@ -213,48 +191,56 @@ body {
   .atlas-side-panel-content {
     position: fixed;
     left: 50%;
-    bottom: 86px;
-    transform: translateX(-50%);
+    right: auto;
+    bottom: 0;
+    top: auto;
     z-index: 25;
-    width: min(92vw, 520px) !important;
-    height: min(46dvh, 380px);
-    max-height: 46dvh;
-    border: 1px solid rgba(15, 23, 42, 0.08);
-    border-radius: 28px;
-    background: rgba(255, 255, 255, 0.98);
-    box-shadow: 0 24px 58px rgba(15, 23, 42, 0.18);
+    width: min(100vw, 640px) !important;
+    height: 30dvh;
+    max-height: 100dvh;
+    transform: translateX(-50%);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent);
+    border-bottom: 0;
+    border-radius: var(--radius-box) var(--radius-box) 0 0;
+    background: var(--color-base-100);
+    box-shadow: 0 -16px 48px color-mix(in oklch, var(--color-base-content) 18%, transparent);
     overflow: hidden;
     pointer-events: auto;
-    touch-action: none;
-    transition: height 180ms ease, transform 180ms ease, left 180ms ease, right 180ms ease, top 180ms ease, bottom 180ms ease, width 180ms ease, border-radius 180ms ease;
   }
 
-  .atlas-side-panel-content[data-state="fullscreen"] {
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: 0;
+  .atlas-side-panel-content.atlas-sheet-animating {
+    transition: height 240ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 240ms ease;
+  }
+
+  .atlas-side-panel-content.atlas-sheet-dragging {
+    user-select: none;
+  }
+
+  .atlas-side-panel-content[data-sheet-state="fullscreen"] {
     width: 100vw !important;
-    max-height: 100dvh;
-    height: 100dvh !important;
     border-radius: 0;
-    transform: none;
   }
 
-  .atlas-side-panel-content::before {
-    content: "";
-    position: absolute;
-    left: 50%;
-    top: 10px;
-    transform: translateX(-50%);
-    width: 34px;
-    height: 4px;
-    border-radius: 999px;
-    background: rgba(148, 163, 184, 0.9);
+  .atlas-side-panel-content[data-sheet-state="collapsed"] {
+    border-width: 0;
+    overflow: hidden;
   }
 
-  .atlas-side-panel:not(.atlas-mobile-panel-open) .atlas-side-panel-content {
-    display: none;
+  .atlas-sheet-handle {
+    display: flex;
+    flex: 0 0 32px;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    cursor: ns-resize;
+    touch-action: none;
+  }
+
+  .atlas-sheet-handle > span {
+    width: 42px;
+    height: 5px;
+    border-radius: 9999px;
+    background: color-mix(in oklch, var(--color-base-content) 28%, transparent);
   }
 
   .atlas-side-panel:not(.atlas-mobile-panel-open) .apo-brand-text {
@@ -276,7 +262,6 @@ body {
     letter-spacing: 0.01em;
     color: var(--color-base-content);
     border-color: color-mix(in oklch, var(--color-base-content) 18%, transparent);
-    background: color-mix(in oklch, var(--color-base-100) 88%, transparent);
   }
 
   .maplibregl-ctrl-bottom-right,
