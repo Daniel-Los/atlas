@@ -1,7 +1,18 @@
-<div class="flex h-screen">
-  <aside class="flex w-64 flex-col bg-base-200 p-4">
-    <h1 class="text-xl font-bold mb-4">Atlas Admin</h1>
-    <ul class="menu">
+<div class="atlas-admin-shell flex h-screen flex-col md:flex-row">
+  <aside class="atlas-admin-sidebar flex w-64 flex-col bg-base-200 p-4">
+    <div class="flex items-center justify-between gap-3">
+      <h1 class="text-xl font-bold">Atlas Admin</h1>
+      <details class="atlas-admin-mobile-menu dropdown dropdown-end">
+        <summary class="btn btn-square btn-sm btn-ghost" aria-label="Open admin navigation">☰</summary>
+        <ul class="menu dropdown-content z-30 mt-2 w-52 rounded-box bg-base-100 p-2 shadow-lg">
+          <li><.link navigate={~p"/admin/services"}>Services</.link></li>
+          <li><.link navigate={~p"/admin/regions"}>Regions</.link></li>
+          <li><.link navigate={~p"/admin/tiles"}>Tiles</.link></li>
+          <li><.link navigate={~p"/admin/apply"}>Apply</.link></li>
+        </ul>
+      </details>
+    </div>
+    <ul class="menu mt-4 hidden md:flex">
       <li><.link navigate={~p"/admin/services"}>Services</.link></li>
       <li><.link navigate={~p"/admin/regions"}>Regions</.link></li>
       <li><.link navigate={~p"/admin/tiles"}>Tiles</.link></li>
@@ -17,7 +28,7 @@
       {Atlas.Version.display()}
     </a>
   </aside>
-  <main class="flex-1 p-6 overflow-y-auto">
+  <main class="atlas-admin-main min-w-0 flex-1 overflow-y-auto p-6">
     <.flash_group flash={@flash} />
     {@inner_content}
   </main>

@@ -108,6 +108,10 @@ html, body {
   padding: 0;
 }
 
+body {
+  overflow-x: hidden;
+}
+
 #map {
   position: absolute;
   inset: 0;
@@ -120,6 +124,99 @@ html, body {
 }
 
 @media (max-width: 639px) {
+  .atlas-side-panel > .apo-brand,
+  .atlas-side-panel > .apo-brand-text {
+    display: none;
+  }
+
+  .atlas-side-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    width: 100%;
+    max-height: 100dvh;
+    pointer-events: none;
+  }
+
+  .atlas-side-panel > .flex {
+    display: block;
+    width: 100%;
+    height: 100%;
+    max-height: 100dvh;
+  }
+
+  .atlas-side-panel nav {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    z-index: 30;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 20px;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+    backdrop-filter: blur(12px);
+    pointer-events: auto;
+  }
+
+  .atlas-side-panel nav > button {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    border-radius: 14px !important;
+    border: 0;
+    background: transparent;
+    color: #334155;
+  }
+
+  .atlas-side-panel nav > button.btn-primary {
+    background: #1a73e8;
+    color: #fff;
+    box-shadow: 0 8px 18px rgba(26, 115, 232, 0.22);
+  }
+
+  .atlas-side-panel nav > .flex-1,
+  .atlas-side-panel nav > button[aria-label="Toggle light/dark"] {
+    display: none;
+  }
+
+  .atlas-side-panel-content {
+    position: fixed;
+    left: 50%;
+    bottom: 86px;
+    transform: translateX(-50%);
+    z-index: 25;
+    width: min(92vw, 520px) !important;
+    height: min(46dvh, 380px);
+    max-height: 46dvh;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 28px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 24px 58px rgba(15, 23, 42, 0.18);
+    overflow: hidden;
+    pointer-events: auto;
+    touch-action: none;
+    transition: height 180ms ease;
+  }
+
+  .atlas-side-panel-content::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 10px;
+    transform: translateX(-50%);
+    width: 34px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.9);
+  }
+
   .atlas-side-panel:not(.atlas-mobile-panel-open) .atlas-side-panel-content {
     display: none;
   }
@@ -129,24 +226,62 @@ html, body {
   }
 
   .atlas-mobile-panel-toggle {
-    display: inline-flex;
-  }
-
-  .atlas-mobile-panel-open .atlas-side-panel-content {
-    position: absolute;
-    inset-block: 0;
-    inset-inline-start: calc(100% + 0.5rem);
-    width: min(calc(100vw - 4.5rem), 380px);
-    max-width: calc(100vw - 4.5rem);
-    background: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-box);
-    box-shadow: 0 16px 40px color-mix(in oklch, var(--color-base-content) 18%, transparent);
+    display: none;
   }
 
   .atlas-mobile-panel-open .atlas-mobile-panel-toggle-icon {
     transform: rotate(180deg);
   }
+
+  .atlas-empty-state {
+    max-width: min(280px, calc(100vw - 40px));
+    font-size: 0.9rem;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    color: #334155;
+    border-color: rgba(148, 163, 184, 0.65);
+  }
+
+  .maplibregl-ctrl-bottom-right,
+  .maplibregl-ctrl-bottom-left {
+    margin-bottom: 14px !important;
+  }
+
+  .maplibregl-ctrl-group {
+    border-radius: 18px !important;
+    overflow: hidden;
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.12);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+  }
+
+  .maplibregl-ctrl-group button {
+    width: 40px !important;
+    height: 40px !important;
+    background: rgba(255, 255, 255, 0.9) !important;
+    color: #334155 !important;
+  }
+
+  .maplibregl-ctrl-scale {
+    border: 1px solid rgba(15, 23, 42, 0.18);
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  }
+
+  .atlas-admin-shell { min-height: 100dvh; }
+  .atlas-admin-sidebar { width: 100%; padding: 0.75rem 1rem; }
+  .atlas-admin-main { min-width: 0; padding: 1rem; }
+  .atlas-admin-main .table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .atlas-admin-main .join { flex-direction: column; align-items: stretch; }
+  .atlas-admin-main .join > * { width: 100%; border-radius: var(--radius-field); }
+}
+
+@media (min-width: 640px) {
+  .atlas-admin-mobile-menu { display: none; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

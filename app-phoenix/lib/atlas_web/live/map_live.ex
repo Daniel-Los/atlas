@@ -37,6 +37,7 @@ defmodule AtlasWeb.MapLive do
        route_from: "",
        route_to: "",
        places: [],
+       selected_nodes: [],
        route_options: %{
          "avoid_tolls" => false,
          "avoid_highways" => false,
@@ -55,7 +56,12 @@ defmodule AtlasWeb.MapLive do
   @impl true
   def handle_event("select_tab", %{"tab" => tab}, socket)
       when tab in ~w(search route places settings) do
-    {:noreply, assign(socket, active_tab: tab, mobile_panel_open: true)}
+    mobile_panel_open =
+      if tab == socket.assigns.active_tab,
+        do: not socket.assigns.mobile_panel_open,
+        else: true
+
+    {:noreply, assign(socket, active_tab: tab, mobile_panel_open: mobile_panel_open)}
   end
 
   @impl true
@@ -586,6 +592,12 @@ defmodule AtlasWeb.MapLive do
           data-center="[10.4515, 51.1657]"
           data-zoom="5"
         >
+        </div>
+
+        <div :if={@selected_nodes == []} class="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
+          <div class="atlas-empty-state rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-center text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+            No nodes are currently selected.
+          </div>
         </div>
       </div>
     </div>

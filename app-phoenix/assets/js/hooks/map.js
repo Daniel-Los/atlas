@@ -42,6 +42,15 @@ export default {
     }), "bottom-left")
     this.markers = {}
 
+    // MapLibre needs an explicit resize when mobile browser chrome or an
+    // embedded layout changes the map container dimensions.
+    if (window.ResizeObserver) {
+      this.resizeObserver = new ResizeObserver(() => this.map.resize())
+      this.resizeObserver.observe(this.el)
+    }
+    this.viewportResizeHandler = () => this.map.resize()
+    window.visualViewport?.addEventListener("resize", this.viewportResizeHandler)
+
     this.handleEvent("map:fly_to", ({ lat, lon, zoom }) => {
       this.map.flyTo({ center: [lon, lat], zoom: zoom || 14 })
     })
@@ -161,6 +170,8 @@ export default {
   },
 
   destroyed() {
+    this.resizeObserver?.disconnect()
+    window.visualViewport?.removeEventListener("resize", this.viewportResizeHandler)
     if (this.map) this.map.remove()
   }
 }
