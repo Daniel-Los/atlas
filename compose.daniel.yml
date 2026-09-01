@@ -1,0 +1,315 @@
+# Development compose for Atlas.
+#
+# Uses the existing production/deployment Dockerfile unchanged.
+# Development behaviour is handled entirely by Docker Compose.
+#
+# Features:
+# - Builds app-phoenix locally.
+# - Rebuilds and restarts the app automatically when source files change.
+# - Exposes Phoenix and Caddy on all host interfaces, so the app is reachable
+#   from other devices on the LAN.
+#
+# Start:
+#
+#   sudo docker compose -f compose.daniel.yml up --watch
+#
+# Detached:
+#
+#   sudo docker compose -f compose.daniel.yml up -d --watch
+#
+# With all sidecars:
+#
+#   sudo docker compose -f compose.daniel.yml --profile all up --watch
+#
+# From the tower:
+#
+#   http://localhost:8484
+#
+# From your phone:
+#
+#   http://<TOWER-IP>:8484
+#
+# Optionally set PHX_HOST in .env to your tower LAN IP:
+#
+#   PHX_HOST=192.168.1.123
+
+
+services:
+
+  caddy:
+    image: caddy:2.11.3-alpine
+    container_name: atlas-caddy
+
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/tiles:/srv/tiles:ro
+      - ./data/caddy:/data
+      - ./data/caddy-config:/config
+
+    ports:
+      - "0.0.0.0:8484:80"
+
+    depends_on:
+      - app
+
+    restart: unless-stopped
+
+
+  app:
+    build:
+      context: ./app-phoenix
+      dockerfile: Dockerfile
+
+    image: atlas-app:dev
+
+    # Build from the local Dockerfile instead of using an existing image.
+    pull_policy: build
+
+    container_name: atlas-app
+
+    environment:
+      # Phoenix runtime
+      PHX_SERVER: "true"
+
+      # Set PHX_HOST in .env to the tower's LAN IP if Phoenix generates
+      # absolute URLs, redirects or websocket URLs.
+      PHX_HOST: ${PHX_HOST:-localhost}
+
+      PORT: "4000"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-}
+
+      # Database
+      DATABASE_PATH: ${DATABASE_PATH:-/data/atlas.sqlite3}
+      DATABASE_URL: ${DATABASE_URL:-}
+
+      # Geocoding
+      PHOTON_URL: http://photon:2322
+      PLACEHOLDER_URL: http://placeholder:3000
+      LIBPOSTAL_URL: http://libpostal:4400
+
+      # Routing
+      VALHALLA_URL: http://valhalla:8002
+
+      # Map matching
+      MAP_MATCH_MAX_POINTS: ${MAP_MATCH_MAX_POINTS:-}
+      VALHALLA_MATCH_TIMEOUT: ${VALHALLA_MATCH_TIMEOUT:-}
+
+      # POIs
+      OVERPASS_URL: http://overpass:80
+
+      # Public transport
+      OTP_URL: http://otp:8080
+
+      # Tiles
+      TILES_URL: ${TILES_URL:-}
+      TILES_THEME: ${TILES_THEME:-atlas-light}
+
+      # Default map position
+      DEFAULT_LAT: ${DEFAULT_LAT:-51.1657}
+      DEFAULT_LON: ${DEFAULT_LON:-10.4515}
+      DEFAULT_ZOOM: ${DEFAULT_ZOOM:-2}
+
+      # Admin
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+
+      # Control plane
+      #
+      # The app runs docker compose against the host Docker daemon via
+      # /var/run/docker.sock.
+      COMPOSE_FILE: /work/compose.daniel.yml
+
+      # Allows in-container docker compose commands to resolve relative
+      # paths against the host checkout.
+      HOST_PROJECT_DIR: ${HOST_PROJECT_DIR:-${PWD}}
+
+    volumes:
+      # Persistent app data
+      - ./data/app:/data
+
+      # Region configuration
+      - ./regions:/work/regions:ro
+
+      # Host Docker daemon
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Compose/control-plane files
+      - ./compose.daniel.yml:/work/compose.daniel.yml:ro
+      - .:/work:ro
+
+      # Mutable data directories
+      - ./data/osm:/work/data/osm
+      - ./data/gtfs:/work/data/gtfs
+      - ./data/otp:/work/data/otp
+      - ./data/tiles:/work/data/tiles
+
+    # Match the Docker socket group so the application user can access it.
+    #
+    # Linux:
+    #   stat -c %g /var/run/docker.sock
+    #
+    # Docker Desktop / OrbStack:
+    #   DOCKER_GID=0
+    group_add:
+      - "${DOCKER_GID:-999}"
+
+    ports:
+      # Direct Phoenix access from host/LAN.
+      - "0.0.0.0:4000:4000"
+
+    restart: unless-stopped
+
+    # Development file watching.
+    #
+    # Source code is NOT mounted over /app.
+    # Instead, Compose rebuilds the normal Docker image when source files
+    # change. This keeps the production Dockerfile untouched.
+    develop:
+      watch:
+        - action: rebuild
+          path: ./app-phoenix
+          ignore:
+            - _build/
+            - deps/
+            - .git/
+            - node_modules/
+
+
+  photon:
+    image: rtuszik/photon-docker:2.2.0
+    container_name: apo-photon
+
+    profiles:
+      - geocoding
+      - all
+
+    environment:
+      UPDATE_STRATEGY: PARALLEL
+
+      # rtuszik/photon-docker reads REGION, not COUNTRY_CODE.
+      # Empty/unset means planet.
+      REGION: ${COUNTRY_CODE:-de}
+
+    volumes:
+      - ./data/photon:/photon/data
+
+    restart: unless-stopped
+
+
+  whosonfirst:
+    image: pelias/whosonfirst:v8.4.0
+    container_name: apo-whosonfirst
+
+    profiles:
+      - data-setup
+
+    user: "${UID:-1001}:${GID:-1001}"
+
+    environment:
+      WHOSONFIRST_COUNTRY_CODE: ${WHOSONFIRST_COUNTRY_CODE:-${COUNTRY_CODE:-de}}
+
+    volumes:
+      - ./data/whosonfirst:/mnt/pelias/whosonfirst
+
+    command:
+      - bash
+      - /code/pelias/whosonfirst/bin/download
+
+
+  placeholder:
+    image: pelias/placeholder:v5.5.0
+    container_name: apo-placeholder
+
+    profiles:
+      - geocoding
+      - all
+
+    environment:
+      PORT: 3000
+      PLACEHOLDER_DATA: /data
+      WOF_DIR: /wof/sqlite
+
+    volumes:
+      - ./data/placeholder:/data
+      - ./data/whosonfirst:/wof:ro
+
+    restart: unless-stopped
+
+
+  libpostal:
+    image: pelias/libpostal-service:nodejs-20
+    container_name: apo-libpostal
+
+    profiles:
+      - geocoding
+      - all
+
+    restart: unless-stopped
+
+
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:3.5.1
+    container_name: apo-valhalla
+
+    profiles:
+      - routing
+      - all
+
+    environment:
+      serve_tiles: "True"
+      build_admins: "True"
+      build_elevation: ${BUILD_ELEVATION:-False}
+      use_tiles_ignore_pbf: "False"
+
+    volumes:
+      - ./data/valhalla:/custom_files
+      - ./data/srtm:/custom_files/elevation_data
+      - ./data/osm:/osm:ro
+
+    restart: unless-stopped
+
+
+  overpass:
+    image: wiktorn/overpass-api:v0.7.62.11
+    container_name: apo-overpass
+
+    profiles:
+      - pois
+      - all
+
+    environment:
+      OVERPASS_META: ${OVERPASS_META:-no}
+      OVERPASS_MODE: init
+      OVERPASS_PLANET_URL: file:///osm/current.osm.bz2
+      OVERPASS_DIFF_URL: ${OVERPASS_DIFF_URL:-https://download.geofabrik.de/europe/germany-updates/}
+      OVERPASS_RULES_LOAD: 10
+      OVERPASS_COMPRESSION: lz4
+
+    volumes:
+      - ./data/overpass:/db
+      - ./data/osm:/osm:ro
+
+    restart: unless-stopped
+
+
+  otp:
+    image: opentripplanner/opentripplanner:2.10.0_2026-05-18T08-51
+    container_name: apo-otp
+
+    profiles:
+      - transit
+      - all
+
+    command:
+      - --build
+      - --save
+      - --serve
+
+    environment:
+      JAVA_OPTS: ${OTP_JAVA_OPTS:--Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=500}
+
+    volumes:
+      - ./data/otp:/var/opentripplanner
+      - ./data/osm:/osm:ro
+
+    restart: unless-stopped

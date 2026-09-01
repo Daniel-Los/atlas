@@ -600,10 +600,15 @@ defmodule AtlasWeb.MapLive do
         >
         </div>
 
-        <div :if={@selected_nodes == []} class="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
-          <div class="atlas-empty-state rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-center text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm">
-            No nodes are currently selected.
-          </div>
+      </div>
+
+      <div
+        :if={@selected_nodes == []}
+        data-role="map-empty-state"
+        class="atlas-empty-state-wrap pointer-events-none fixed inset-x-0 z-40 flex justify-center px-4"
+      >
+        <div class="atlas-empty-state rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-center text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+          No nodes are currently selected.
         </div>
       </div>
     </div>

@@ -33,9 +33,24 @@ defmodule AtlasWeb.MapLiveTest do
   end
 
   test "mobile map shows an empty-state when no nodes are selected", %{conn: conn} do
-    {:ok, _view, html} = live(conn, ~p"/")
+    {:ok, view, html} = live(conn, ~p"/")
 
     assert html =~ "No nodes are currently selected."
+    assert has_element?(
+             view,
+             ~s([data-role="map-empty-state"].atlas-empty-state-wrap.fixed.z-40)
+           )
+    refute html =~ ~s(data-role="map-empty-state" class="pointer-events-none absolute)
+  end
+
+  test "mobile sheet exposes the active tab for swipe navigation", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, ~s(#atlas-side-panel-content[data-active-tab="search"]))
+
+    view |> element("button[phx-value-tab=route]") |> render_click()
+
+    assert has_element?(view, ~s(#atlas-side-panel-content[data-active-tab="route"]))
   end
 
   test "mobile sidebar can be opened and closed without changing the active tab", %{conn: conn} do

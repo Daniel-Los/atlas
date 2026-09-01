@@ -7,10 +7,12 @@ import LogStreamHook from "./hooks/log_stream"
 
 const MobileSheet = {
   mounted() {
+    this.tabs = ["search", "route", "places", "settings"]
     this.panel = this.el.closest(".atlas-side-panel")
     this.handle = this.el.querySelector("[data-sheet-handle]")
     this.state = this.panel?.classList.contains("atlas-mobile-panel-open") ? "half" : "collapsed"
     this.dragging = false
+    this.gestureAxis = null
 
     this.snapHeights = () => ({
       collapsed: 0,
@@ -45,35 +47,90 @@ const MobileSheet = {
 
     this.onPointerDown = event => {
       if (window.innerWidth > 639 || event.button !== 0) return
-      if (event.target.closest("button, input, textarea, select, a, label")) return
-      this.dragging = true
+      this.resizeGesture = Boolean(event.target.closest("[data-sheet-handle]"))
+      if (!this.resizeGesture && event.target.closest("button, input, textarea, select, a, label")) return
+      this.gestureAxis = null
+      this.startX = event.clientX
       this.startY = event.clientY
       this.startHeight = this.el.getBoundingClientRect().height
-      this.el.classList.remove("atlas-sheet-animating")
-      this.el.classList.add("atlas-sheet-dragging")
       this.el.setPointerCapture?.(event.pointerId)
     }
 
     this.onPointerMove = event => {
-      if (!this.dragging) return
+      if (this.startX === undefined) return
+
+      const deltaX = event.clientX - this.startX
+      const deltaY = event.clientY - this.startY
+
+      if (!this.gestureAxis && Math.max(Math.abs(deltaX), Math.abs(deltaY)) >= 8) {
+        const horizontal = Math.abs(deltaX) > Math.abs(deltaY)
+        if (horizontal && this.state === "fullscreen" && !this.resizeGesture) {
+          this.gestureAxis = "horizontal"
+        } else if (!horizontal && this.resizeGesture) {
+          this.gestureAxis = "vertical"
+        } else {
+          this.gestureAxis = "ignored"
+        }
+
+        if (this.gestureAxis === "vertical") {
+          this.dragging = true
+          this.el.classList.remove("atlas-sheet-animating")
+          this.el.classList.add("atlas-sheet-dragging")
+        }
+      }
+
+      if (this.gestureAxis !== "vertical") return
       const height = Math.max(0, Math.min(window.innerHeight, this.startHeight + this.startY - event.clientY))
       this.el.style.height = `${height}px`
     }
 
-    this.onPointerUp = () => {
-      if (!this.dragging) return
+    this.onPointerUp = event => {
+      if (this.startX === undefined) return
+
+      if (this.gestureAxis === "horizontal") {
+        const deltaX = event.clientX - this.startX
+        if (Math.abs(deltaX) >= 50) {
+          const currentIndex = this.tabs.indexOf(this.el.dataset.activeTab)
+          const direction = deltaX < 0 ? 1 : -1
+          const nextIndex = Math.max(0, Math.min(this.tabs.length - 1, currentIndex + direction))
+
+          if (currentIndex >= 0 && nextIndex !== currentIndex) {
+            this.pushEvent("select_tab", {tab: this.tabs[nextIndex]})
+          }
+        }
+      } else if (this.dragging) {
+        this.el.classList.remove("atlas-sheet-dragging")
+        const state = this.nearestState()
+        this.setState(state)
+        this.pushEvent("set_mobile_panel_state", {open: state !== "collapsed"})
+      }
+
       this.dragging = false
-      this.el.classList.remove("atlas-sheet-dragging")
-      const state = this.nearestState()
-      this.setState(state)
-      this.pushEvent("set_mobile_panel_state", {open: state !== "collapsed"})
+      this.gestureAxis = null
+      this.startX = undefined
+      this.startY = undefined
+      this.startHeight = undefined
+      this.resizeGesture = false
+    }
+
+    this.onPointerCancel = () => {
+      if (this.dragging) {
+        this.el.classList.remove("atlas-sheet-dragging")
+        this.setState(this.state)
+      }
+      this.dragging = false
+      this.gestureAxis = null
+      this.startX = undefined
+      this.startY = undefined
+      this.startHeight = undefined
+      this.resizeGesture = false
     }
 
     this.onResize = () => this.setState(this.state, false)
     this.el.addEventListener("pointerdown", this.onPointerDown)
     this.el.addEventListener("pointermove", this.onPointerMove)
     this.el.addEventListener("pointerup", this.onPointerUp)
-    this.el.addEventListener("pointercancel", this.onPointerUp)
+    this.el.addEventListener("pointercancel", this.onPointerCancel)
     window.addEventListener("resize", this.onResize)
     this.setState(this.state, false)
   },
@@ -96,7 +153,7 @@ const MobileSheet = {
     this.el.removeEventListener("pointerdown", this.onPointerDown)
     this.el.removeEventListener("pointermove", this.onPointerMove)
     this.el.removeEventListener("pointerup", this.onPointerUp)
-    this.el.removeEventListener("pointercancel", this.onPointerUp)
+    this.el.removeEventListener("pointercancel", this.onPointerCancel)
     window.removeEventListener("resize", this.onResize)
   }
 }

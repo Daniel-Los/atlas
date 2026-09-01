@@ -72,6 +72,7 @@ defmodule AtlasWeb.SidePanel do
         <div
           id="atlas-side-panel-content"
           phx-hook="MobileSheet"
+          data-active-tab={@active_tab}
           class="atlas-side-panel-content w-[min(85vw,380px)] flex flex-col overflow-hidden"
         >
           <button

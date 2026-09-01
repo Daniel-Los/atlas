@@ -128,6 +128,14 @@ body {
 }
 
 @media (max-width: 639px) {
+  /* iOS Safari zooms the viewport when an input smaller than 16px receives
+     focus. Keep the compact desktop sizing while making mobile text fields
+     safe to focus. */
+  .atlas-side-panel-content input[type="search"],
+  .atlas-side-panel-content input[type="text"] {
+    font-size: 16px;
+  }
+
   .atlas-side-panel > .apo-brand,
   .atlas-side-panel > .apo-brand-text {
     display: none;
@@ -206,7 +214,7 @@ body {
     box-shadow: 0 -16px 48px color-mix(in oklch, var(--color-base-content) 18%, transparent);
     overflow: hidden;
     pointer-events: auto;
-    touch-action: none;
+    touch-action: pan-y;
   }
 
   .atlas-side-panel-content.atlas-sheet-animating {
@@ -301,6 +309,10 @@ body {
   }
   .atlas-admin-main .join { flex-direction: column; align-items: stretch; }
   .atlas-admin-main .join > * { width: 100%; border-radius: var(--radius-field); }
+}
+
+.atlas-empty-state-wrap {
+  top: max(16px, env(safe-area-inset-top));
 }
 
 @media (min-width: 640px) {
